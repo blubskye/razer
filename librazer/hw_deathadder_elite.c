@@ -234,13 +234,48 @@ static int elite_set_dpimapping(struct razer_mouse_profile *p,
 static int elite_led_toggle_state(struct razer_led *led,
 				  enum razer_led_state new_state)
 {
+	int err;
 	struct elite_drv_data *d = led->u.mouse->drv_data;
 	struct elite_led *priv_led = elite_get_led(d, led->id);
 
 	if (!priv_led)
 		return -EINVAL;
-	priv_led->brightness = (new_state == RAZER_LED_OFF) ? 0x00 : 0xFF;
-	return elite_send_set_led(led->u.mouse, priv_led);
+
+	if (new_state == RAZER_LED_OFF) {
+		priv_led->brightness = 0x00;
+		return razer_chroma_ext_set_brightness(led->u.mouse,
+						       &d->packet_spacing,
+						       priv_led->id, 0x00);
+	}
+
+	/* Turning ON: restore brightness then re-apply stored mode/color */
+	priv_led->brightness = 0xFF;
+	err = razer_chroma_ext_set_brightness(led->u.mouse, &d->packet_spacing,
+					      priv_led->id, 0xFF);
+	if (err)
+		return err;
+
+	/* Re-apply mode so device restores the effect */
+	switch (priv_led->mode) {
+	case RAZER_LED_MODE_SPECTRUM:
+		return razer_chroma_ext_set_spectrum(led->u.mouse,
+						     &d->packet_spacing,
+						     priv_led->id);
+	case RAZER_LED_MODE_BREATHING:
+		return razer_chroma_ext_set_breathing(led->u.mouse,
+						      &d->packet_spacing,
+						      priv_led->id,
+						      priv_led->color.r,
+						      priv_led->color.g,
+						      priv_led->color.b);
+	default:
+		return razer_chroma_ext_set_static_color(led->u.mouse,
+							 &d->packet_spacing,
+							 priv_led->id,
+							 priv_led->color.r,
+							 priv_led->color.g,
+							 priv_led->color.b);
+	}
 }
 
 static int elite_led_change_color(struct razer_led *led,
@@ -395,7 +430,17 @@ int razer_deathadder_elite_init(struct razer_mouse *m,
 	    (err = elite_send_set_resolution(m)) ||
 	    (err = elite_send_set_frequency(m)) ||
 	    (err = elite_send_set_led(m, &d->scroll_led)) ||
-	    (err = elite_send_set_led(m, &d->logo_led))) {
+	    (err = razer_chroma_ext_set_static_color(m, &d->packet_spacing,
+						     d->scroll_led.id,
+						     d->scroll_led.color.r,
+						     d->scroll_led.color.g,
+						     d->scroll_led.color.b)) ||
+	    (err = elite_send_set_led(m, &d->logo_led)) ||
+	    (err = razer_chroma_ext_set_static_color(m, &d->packet_spacing,
+						     d->logo_led.id,
+						     d->logo_led.color.r,
+						     d->logo_led.color.g,
+						     d->logo_led.color.b))) {
 		m->release(m);
 		free(d);
 		return err;
