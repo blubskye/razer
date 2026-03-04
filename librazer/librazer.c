@@ -173,6 +173,8 @@ static const struct razer_usb_device razer_usbdev_table[] = {
 	USB_MOUSE(0x1532, 0x0038, &razer_deathadder2013_base_ops), /* 1800 edition/Korea PCBang edition */
 	USB_MOUSE(0x1532, 0x0043, &razer_deathadder_chroma_base_ops), /* Chroma edition */
 	USB_MOUSE(0x1532, 0x006e, &razer_deathadder_essential_base_ops), /* Essential */
+	USB_MOUSE(0x1532, 0x0071, &razer_deathadder_essential_base_ops), /* Essential White Edition */
+	USB_MOUSE(0x1532, 0x0098, &razer_deathadder_essential_base_ops), /* Essential 2021 */
 //	USB_MOUSE(0x04B4, 0xE006, &razer_deathadder_base_ops), /* cypress bootloader */
 	USB_MOUSE(0x1532, 0x0003, &razer_krait_base_ops),
 	USB_MOUSE(0x1532, 0x000C, &razer_lachesis_base_ops), /* classic */

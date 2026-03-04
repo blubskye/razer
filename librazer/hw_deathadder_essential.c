@@ -18,6 +18,7 @@
  */
 
 #include "hw_deathadder_essential.h"
+#include "hw_chroma_extended.h"
 #include "razer_private.h"
 
 #include <errno.h>
@@ -141,6 +142,8 @@ struct deathadder_essential_led
 {
 	enum deathadder_essential_led_id id;
 	enum deathadder_essential_led_state state;
+	struct razer_rgb_color color;
+	enum razer_led_mode mode;
 };
 
 struct deathadder_essential_driver_data
@@ -560,6 +563,58 @@ deathadder_essential_set_dpimapping(struct razer_mouse_profile *p,
 	return deathadder_essential_send_set_resolution_command(p->mouse);
 }
 
+static int deathadder_essential_led_change_color(struct razer_led *led,
+						 const struct razer_rgb_color *color)
+{
+	struct deathadder_essential_driver_data *drv_data;
+	struct deathadder_essential_led *priv_led;
+
+	drv_data = led->u.mouse->drv_data;
+	priv_led = deathadder_essential_get_led(drv_data, led->id);
+	if (!priv_led)
+		return -EINVAL;
+
+	priv_led->color = *color;
+	return razer_chroma_ext_set_static_color(led->u.mouse,
+						 &drv_data->packet_spacing,
+						 priv_led->id,
+						 color->r, color->g, color->b);
+}
+
+static int deathadder_essential_led_set_mode(struct razer_led *led,
+					     enum razer_led_mode new_mode)
+{
+	struct deathadder_essential_driver_data *drv_data;
+	struct deathadder_essential_led *priv_led;
+
+	drv_data = led->u.mouse->drv_data;
+	priv_led = deathadder_essential_get_led(drv_data, led->id);
+	if (!priv_led)
+		return -EINVAL;
+
+	priv_led->mode = new_mode;
+	switch (new_mode) {
+	case RAZER_LED_MODE_SPECTRUM:
+		return razer_chroma_ext_set_spectrum(led->u.mouse,
+						     &drv_data->packet_spacing,
+						     priv_led->id);
+	case RAZER_LED_MODE_BREATHING:
+		return razer_chroma_ext_set_breathing(led->u.mouse,
+						      &drv_data->packet_spacing,
+						      priv_led->id,
+						      priv_led->color.r,
+						      priv_led->color.g,
+						      priv_led->color.b);
+	default: /* RAZER_LED_MODE_STATIC */
+		return razer_chroma_ext_set_static_color(led->u.mouse,
+							 &drv_data->packet_spacing,
+							 priv_led->id,
+							 priv_led->color.r,
+							 priv_led->color.g,
+							 priv_led->color.b);
+	}
+}
+
 static int deathadder_essential_get_leds(struct razer_mouse *m,
 					 struct razer_led **leds_list)
 {
@@ -580,7 +635,9 @@ static int deathadder_essential_get_leds(struct razer_mouse *m,
 		return -ENOMEM;
 	}
 
-	supported_modes = (1 << RAZER_LED_MODE_STATIC);
+	supported_modes = (1 << RAZER_LED_MODE_STATIC) |
+			  (1 << RAZER_LED_MODE_SPECTRUM) |
+			  (1 << RAZER_LED_MODE_BREATHING);
 
 	scroll_state =
 	    drv_data->scroll_led.state == DEATHADDER_ESSENTIAL_LED_STATE_OFF
@@ -593,8 +650,9 @@ static int deathadder_essential_get_leds(struct razer_mouse *m,
 	    .state = scroll_state,
 	    .u.mouse = m,
 	    .toggle_state = deathadder_essential_led_toggle_state,
-	    .change_color = NULL,
-	    .set_mode = NULL,
+	    .change_color = deathadder_essential_led_change_color,
+	    .set_mode     = deathadder_essential_led_set_mode,
+	    .color        = { .r = 0xFF, .g = 0xFF, .b = 0xFF, .valid = 1 },
 	    .next = logo,
 	    .supported_modes_mask = supported_modes,
 	    .mode = RAZER_LED_MODE_STATIC};
@@ -610,8 +668,9 @@ static int deathadder_essential_get_leds(struct razer_mouse *m,
 	    .state = logo_state,
 	    .u.mouse = m,
 	    .toggle_state = deathadder_essential_led_toggle_state,
-	    .change_color = NULL,
-	    .set_mode = NULL,
+	    .change_color = deathadder_essential_led_change_color,
+	    .set_mode     = deathadder_essential_led_set_mode,
+	    .color        = { .r = 0xFF, .g = 0xFF, .b = 0xFF, .valid = 1 },
 	    .supported_modes_mask = supported_modes,
 	    .mode = RAZER_LED_MODE_STATIC};
 
@@ -653,11 +712,15 @@ int razer_deathadder_essential_init(struct razer_mouse *m,
 
 	drv_data->scroll_led = (struct deathadder_essential_led){
 	    .id = DEATHADDER_ESSENTIAL_LED_ID_SCROLL,
-	    .state = DEATHADDER_ESSENTIAL_LED_STATE_ON};
+	    .state = DEATHADDER_ESSENTIAL_LED_STATE_ON,
+	    .color = { .r = 0xFF, .g = 0xFF, .b = 0xFF, .valid = 1 },
+	};
 
 	drv_data->logo_led = (struct deathadder_essential_led){
 	    .id = DEATHADDER_ESSENTIAL_LED_ID_LOGO,
-	    .state = DEATHADDER_ESSENTIAL_LED_STATE_ON};
+	    .state = DEATHADDER_ESSENTIAL_LED_STATE_ON,
+	    .color = { .r = 0xFF, .g = 0xFF, .b = 0xFF, .valid = 1 },
+	};
 
 	razer_init_axes(drv_data->axes, "X/Y",
 			RAZER_AXIS_INDEPENDENT_DPIMAPPING, "Scroll", 0, NULL,
