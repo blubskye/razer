@@ -26,6 +26,7 @@ add_library(razer ${SHARED_OR_STATIC}
 	    hw_deathadder_v2.c
 	    hw_basilisk.c
 	    hw_viper.c
+	    hw_lancehead.c
 	    hw_krait.c
 	    hw_lachesis.c
 	    hw_lachesis5k6.c
