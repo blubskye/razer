@@ -22,6 +22,7 @@ add_library(razer ${SHARED_OR_STATIC}
 	    hw_deathadder_chroma.c
 	    hw_deathadder_essential.c
 	    hw_chroma_extended.c
+	    hw_deathadder_elite.c
 	    hw_krait.c
 	    hw_lachesis.c
 	    hw_lachesis5k6.c
