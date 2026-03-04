@@ -44,7 +44,7 @@ enum deathadder_essential_led_id {
 
 enum deathadder_essential_led_state {
 	DEATHADDER_ESSENTIAL_LED_STATE_OFF = 0x00,
-	DEATHADDER_ESSENTIAL_LED_STATE_ON = 0x01
+	DEATHADDER_ESSENTIAL_LED_STATE_ON = 0xFF	/* brightness: 0=off, 255=full */
 };
 
 /*
@@ -70,7 +70,7 @@ enum deathadder_essential_request {
 	DEATHADDER_ESSENTIAL_REQUEST_GET_FIRMWARE = 0x0087,
 	DEATHADDER_ESSENTIAL_REQUEST_GET_SERIAL_NO = 0x0082,
 	DEATHADDER_ESSENTIAL_REQUEST_SET_FREQUENCY = 0x0005,
-	DEATHADDER_ESSENTIAL_REQUEST_SET_LED_STATE = 0x0300
+	DEATHADDER_ESSENTIAL_REQUEST_SET_LED_BRIGHTNESS = 0x0F04
 };
 
 enum deathadder_essential_constants {
@@ -105,7 +105,7 @@ enum deathadder_essential_constants {
 	 */
 	DEATHADDER_ESSENTIAL_LED_ARG0 = 0x01,
 	DEATHADDER_ESSENTIAL_INIT_ARG0 = 0x03,
-	DEATHADDER_ESSENTIAL_RESOLUTION_ARG0 = 0x00
+	DEATHADDER_ESSENTIAL_RESOLUTION_ARG0 = 0x01	/* VARSTORE: persist to device */
 };
 
 struct deathadder_essential_command
@@ -376,11 +376,12 @@ static int deathadder_essential_send_set_led_state_command(
 	struct deathadder_essential_command cmd;
 
 	cmd = DEATHADDER_ESSENTIAL_COMMAND_INIT;
+	cmd.magic = 0x3F; /* LED commands require transaction_id 0x3F */
 	cmd.size = DEATHADDER_ESSENTIAL_REQUEST_SIZE_SET_LED_STATE;
-	cmd.request = cpu_to_be16(DEATHADDER_ESSENTIAL_REQUEST_SET_LED_STATE);
-	cmd.bvalue[0] = DEATHADDER_ESSENTIAL_LED_ARG0;
+	cmd.request = cpu_to_be16(DEATHADDER_ESSENTIAL_REQUEST_SET_LED_BRIGHTNESS);
+	cmd.bvalue[0] = DEATHADDER_ESSENTIAL_LED_ARG0; /* VARSTORE */
 	cmd.bvalue[1] = led->id;
-	cmd.bvalue[2] = led->state;
+	cmd.bvalue[2] = led->state; /* 0x00=off, 0xFF=full brightness */
 	return deathadder_essential_send_command(m, &cmd);
 }
 
