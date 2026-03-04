@@ -285,6 +285,8 @@ static int dav2_led_change_color(struct razer_led *led,
 	struct dav2_drv_data *d = led->u.mouse->drv_data;
 	struct dav2_led *priv_led = dav2_get_led(d, led->id);
 
+	if (!color || !color->valid)
+		return 0;
 	if (!priv_led)
 		return -EINVAL;
 	priv_led->color = *color;
