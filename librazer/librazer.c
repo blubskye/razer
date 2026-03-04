@@ -24,6 +24,7 @@
 #include "hw_deathadder_chroma.h"
 #include "hw_deathadder_essential.h"
 #include "hw_deathadder_elite.h"
+#include "hw_deathadder_v2.h"
 #include "hw_naga.h"
 #include "hw_krait.h"
 #include "hw_lachesis.h"
@@ -99,6 +100,12 @@ static const struct razer_mouse_base_ops razer_deathadder_elite_base_ops = {
 	.type    = RAZER_MOUSETYPE_DEATHADDER,
 	.init    = razer_deathadder_elite_init,
 	.release = razer_deathadder_elite_release,
+};
+
+static const struct razer_mouse_base_ops razer_deathadder_v2_base_ops = {
+	.type    = RAZER_MOUSETYPE_DEATHADDER,
+	.init    = razer_deathadder_v2_init,
+	.release = razer_deathadder_v2_release,
 };
 
 static const struct razer_mouse_base_ops razer_naga_base_ops = {
@@ -183,6 +190,12 @@ static const struct razer_usb_device razer_usbdev_table[] = {
 	USB_MOUSE(0x1532, 0x0071, &razer_deathadder_essential_base_ops), /* Essential White Edition */
 	USB_MOUSE(0x1532, 0x0098, &razer_deathadder_essential_base_ops), /* Essential 2021 */
 	USB_MOUSE(0x1532, 0x005C, &razer_deathadder_elite_base_ops), /* DeathAdder Elite */
+	USB_MOUSE(0x1532, 0x0084, &razer_deathadder_v2_base_ops), /* DeathAdder V2 */
+	USB_MOUSE(0x1532, 0x008C, &razer_deathadder_v2_base_ops), /* DeathAdder V2 Mini */
+	USB_MOUSE(0x1532, 0x007C, &razer_deathadder_v2_base_ops), /* DeathAdder V2 Pro (wired) */
+	USB_MOUSE(0x1532, 0x007D, &razer_deathadder_v2_base_ops), /* DeathAdder V2 Pro (wireless) */
+	USB_MOUSE(0x1532, 0x009C, &razer_deathadder_v2_base_ops), /* DeathAdder V2 X HyperSpeed */
+	USB_MOUSE(0x1532, 0x00A1, &razer_deathadder_v2_base_ops), /* DeathAdder V2 Lite */
 //	USB_MOUSE(0x04B4, 0xE006, &razer_deathadder_base_ops), /* cypress bootloader */
 	USB_MOUSE(0x1532, 0x0003, &razer_krait_base_ops),
 	USB_MOUSE(0x1532, 0x000C, &razer_lachesis_base_ops), /* classic */
