@@ -48,21 +48,26 @@ int razer_chroma_ext_send(struct razer_mouse *m,
 		RAZER_CHROMA_EXT_SETUP_VALUE, 0,
 		(unsigned char *)cmd, sizeof(*cmd), RAZER_USB_TIMEOUT);
 
-	if (err == (int)sizeof(*cmd)) {
-		err = libusb_control_transfer(
-			m->usb_ctx->h,
-			LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_CLASS |
-				LIBUSB_RECIPIENT_INTERFACE,
-			LIBUSB_REQUEST_CLEAR_FEATURE,
-			RAZER_CHROMA_EXT_SETUP_VALUE, 0,
-			(unsigned char *)cmd, sizeof(*cmd), RAZER_USB_TIMEOUT);
+	if (err != (int)sizeof(*cmd)) {
+		if (spacing)
+			razer_event_spacing_leave(spacing);
+		razer_error("razer-chroma-ext: USB write failed: %d\n", err);
+		return -EIO;
 	}
+
+	err = libusb_control_transfer(
+		m->usb_ctx->h,
+		LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_CLASS |
+			LIBUSB_RECIPIENT_INTERFACE,
+		LIBUSB_REQUEST_CLEAR_FEATURE,
+		RAZER_CHROMA_EXT_SETUP_VALUE, 0,
+		(unsigned char *)cmd, sizeof(*cmd), RAZER_USB_TIMEOUT);
 
 	if (spacing)
 		razer_event_spacing_leave(spacing);
 
 	if (err != (int)sizeof(*cmd)) {
-		razer_error("razer-chroma-ext: USB transfer failed: %d\n", err);
+		razer_error("razer-chroma-ext: USB read failed: %d\n", err);
 		return -EIO;
 	}
 
@@ -74,9 +79,11 @@ int razer_chroma_ext_send(struct razer_mouse *m,
 		return -EBADMSG;
 	}
 
-	if (cmd->status != RAZER_CHROMA_EXT_SUCCESS_STATUS)
+	if (cmd->status != RAZER_CHROMA_EXT_SUCCESS_STATUS) {
 		razer_error("razer-chroma-ext: Command status %02X\n",
 			    cmd->status);
+		return -EPROTO;
+	}
 
 	return 0;
 }
@@ -92,6 +99,11 @@ int razer_chroma_ext_set_dpi(struct razer_mouse *m,
 	cmd.size      = 0x07;
 	cmd.request   = cpu_to_be16(0x0405);
 	cmd.bvalue[0] = RAZER_CHROMA_EXT_VARSTORE;
+	/*
+	 * The union's inner struct has padding1 (1 byte) before value[],
+	 * so value[0] aliases bvalue[1..2] and value[1] aliases bvalue[3..4].
+	 * Layout sent: [VARSTORE, x_hi, x_lo, y_hi, y_lo, 0, 0]
+	 */
 	cmd.value[0]  = cpu_to_be16(x_dpi);
 	cmd.value[1]  = cpu_to_be16(y_dpi);
 	return razer_chroma_ext_send(m, spacing, &cmd);
