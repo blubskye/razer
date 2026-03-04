@@ -82,9 +82,9 @@ static int elite_send_init(struct razer_mouse *m)
 
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.tx_id     = RAZER_CHROMA_EXT_TX_DEFAULT;
-	cmd.size      = 0x02;
-	cmd.request   = cpu_to_be16(0x0004);
-	cmd.bvalue[0] = 0x03;
+	cmd.size      = 0x02;                    /* 2-byte payload */
+	cmd.request   = cpu_to_be16(0x0004);     /* init/handshake request code */
+	cmd.bvalue[0] = 0x03;                    /* init payload byte */
 	return razer_chroma_ext_send(m, &d->packet_spacing, &cmd);
 }
 
@@ -104,6 +104,7 @@ static int elite_send_set_frequency(struct razer_mouse *m)
 
 	switch (d->current_freq) {
 	case RAZER_MOUSE_FREQ_UNKNOWN:
+		return -EINVAL;
 	case RAZER_MOUSE_FREQ_125HZ:
 	case RAZER_MOUSE_FREQ_500HZ:
 	case RAZER_MOUSE_FREQ_1000HZ:
@@ -125,7 +126,7 @@ static int elite_send_set_led(struct razer_mouse *m, struct elite_led *led)
 
 static int elite_get_fw_version(struct razer_mouse *m)
 {
-	return ((struct elite_drv_data *)m->drv_data)->fw_version;
+	return -ENOSYS;
 }
 
 static struct razer_mouse_profile *elite_get_profiles(struct razer_mouse *m)
