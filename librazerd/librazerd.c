@@ -1056,14 +1056,36 @@ void razerd_free_axes(razerd_axis_t *a)
 }
 
 /* ------------------------------------------------------------------ */
-/* Privileged operations stubs                                        */
+/* Privileged operations                                              */
 /* ------------------------------------------------------------------ */
 
 int razerd_flash_firmware(razerd_t *r, const char *idstr,
                            const void *image, size_t len)
 {
-    (void)r; (void)idstr; (void)image; (void)len;
-    return -ENOSYS;
+    if (r->priv_fd < 0) return -EPERM;
+
+    uint32_t payload = htobe32((uint32_t)len);
+    int err = send_priv_cmd(r, CMD_PRIV_FLASHFW, idstr, &payload, 4);
+    if (err) return err;
+
+    /* Send image in RAZERD_BULK_CHUNK-byte chunks, recv u32 ack each */
+    const uint8_t *src = (const uint8_t *)image;
+    size_t sent = 0;
+    while (sent < len) {
+        size_t chunk = len - sent;
+        if (chunk > RAZERD_BULK_CHUNK) chunk = RAZERD_BULK_CHUNK;
+        if (send(r->priv_fd, src + sent, chunk, 0) != (ssize_t)chunk)
+            return -errno;
+        sent += chunk;
+        uint32_t ack;
+        err = recv_u32_priv(r, &ack);
+        if (err) return err;
+        if (ack != 0) {
+            r->last_err = (int)ack;
+            return -EIO;
+        }
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1071,15 +1093,37 @@ int razerd_flash_firmware(razerd_t *r, const char *idstr,
 /* ------------------------------------------------------------------ */
 
 #ifdef LIBRAZERD_NOTIFICATIONS
+
+static void notify_enqueue(razerd_t *r, razerd_event_type_t type)
+{
+    mtx_lock(&r->notify_lock);
+    size_t next = (r->nq_tail + 1u) % NOTIFY_QUEUE_SIZE;
+    if (next != r->nq_head) {          /* queue not full — drop if full */
+        r->nqueue[r->nq_tail].type = type;
+        r->nq_tail = next;
+    }
+    mtx_unlock(&r->notify_lock);
+
+    /* Signal the eventfd so the caller's poll/select wakes up */
+    uint64_t val = 1;
+    (void)write(r->notify_evfd, &val, sizeof(val));
+}
+
 static int notify_thread_fn(void *arg)
 {
     razerd_t *r = arg;
     uint8_t pkt;
+
     while (!r->notify_stop) {
         ssize_t n = recv(r->notify_fd, &pkt, 1, 0);
-        if (n <= 0) break;
-        /* TODO: implement in Task 12 */
-        (void)pkt;
+        if (n <= 0)
+            break;  /* socket shut down or error → stop */
+
+        if (pkt == NOTIFY_NEWMOUSE)
+            notify_enqueue(r, RAZERD_EVENT_NEW_MOUSE);
+        else if (pkt == NOTIFY_DELMOUSE)
+            notify_enqueue(r, RAZERD_EVENT_DEL_MOUSE);
+        /* Unexpected bytes are ignored */
     }
     return 0;
 }
@@ -1091,15 +1135,20 @@ int razerd_get_notify_fd(razerd_t *r)
 
 int razerd_read_event(razerd_t *r, razerd_event_t *ev_out)
 {
-    (void)ev_out;
     mtx_lock(&r->notify_lock);
     if (r->nq_head == r->nq_tail) {
         mtx_unlock(&r->notify_lock);
         return -EAGAIN;
     }
-    *ev_out = r->nqueue[r->nq_head % NOTIFY_QUEUE_SIZE];
-    r->nq_head++;
+    *ev_out = r->nqueue[r->nq_head];
+    r->nq_head = (r->nq_head + 1u) % NOTIFY_QUEUE_SIZE;
     mtx_unlock(&r->notify_lock);
+
+    /* Drain one count from the eventfd so it reflects queue state */
+    uint64_t val;
+    (void)read(r->notify_evfd, &val, sizeof(val));
+
     return 0;
 }
-#endif
+
+#endif /* LIBRAZERD_NOTIFICATIONS */
