@@ -1,52 +1,30 @@
 include("${razer_SOURCE_DIR}/scripts/cmake.global")
 
+set(UI_BACKEND "python" CACHE STRING "UI backend to build: python | qt | gtk")
+set_property(CACHE UI_BACKEND PROPERTY STRINGS python qt gtk)
 
-set(PYRAZER_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/pyrazer/__init__.py"
-		 "${CMAKE_CURRENT_SOURCE_DIR}/pyrazer/main.py"
-		 "${CMAKE_CURRENT_SOURCE_DIR}/pyrazer/ui.py")
+message(STATUS "UI backend: ${UI_BACKEND}")
 
-set(PYRAZER_BUILD "${CMAKE_CURRENT_BINARY_DIR}/build")
+if(UI_BACKEND STREQUAL "python")
+    add_subdirectory(python)
+elseif(UI_BACKEND STREQUAL "qt")
+    add_subdirectory(c)
+    add_subdirectory(qt)
+elseif(UI_BACKEND STREQUAL "gtk")
+    add_subdirectory(c)
+    add_subdirectory(gtk)
+else()
+    message(FATAL_ERROR
+        "Unknown UI_BACKEND '${UI_BACKEND}'. Valid values: python, qt, gtk")
+endif()
 
-
-configure_file(setup.py.in setup.py)
-
-add_custom_command(OUTPUT ${PYRAZER_BUILD}/stamp
-		   COMMAND ${PYTHON} "${CMAKE_CURRENT_BINARY_DIR}/setup.py" build --build-base "${PYRAZER_BUILD}"
-		   COMMAND ${CMAKE_COMMAND} -E touch ${PYRAZER_BUILD}/stamp
-		   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-		   DEPENDS ${PYRAZER_DEPS})
-
-add_custom_target(pyrazer ALL
-		  DEPENDS ${PYRAZER_BUILD}/stamp)
-
-install(CODE
-	"set(PYDESTDIR \"\$ENV{DESTDIR}\")
-	if (\"\${PYDESTDIR}\" STREQUAL \"\")
-		set(PYDESTDIR /)
-	endif()
-	execute_process(COMMAND ${PYTHON} \"${CMAKE_CURRENT_BINARY_DIR}/setup.py\"
-			build --build-base \"${PYRAZER_BUILD}\" install --root \"\${PYDESTDIR}\" --prefix \"${CMAKE_INSTALL_PREFIX}\"
-		        WORKING_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\"
-			RESULT_VARIABLE pyrazer_install_res)
-	if (NOT \"\${pyrazer_install_res}\" STREQUAL \"0\")
-		message(FATAL_ERROR \"Failed to install pyrazer\")
-	endif()
-")
-
-install(PROGRAMS razer-gamewrapper
-	DESTINATION bin)
-
-configure_file(razercfg.desktop.template razercfg.desktop)
-
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/razercfg.desktop
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/share/applications)
-
+# Icons are shared by all backends
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/icons/razercfg-icon.svg
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/scalable/apps
-	RENAME razercfg.svg)
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/scalable/apps
+    RENAME razercfg.svg)
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/icons/razercfg-alt.svg
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/scalable/apps)
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/scalable/apps)
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/icons/razercfg-snake.svg
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/scalable/apps)
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/scalable/apps)
