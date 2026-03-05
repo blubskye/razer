@@ -619,46 +619,108 @@ int razerd_set_led(razerd_t *r, const char *idstr, uint32_t profile_id,
 }
 
 /* ------------------------------------------------------------------ */
-/* DPI stubs                                                           */
+/* DPI operations                                                      */
 /* ------------------------------------------------------------------ */
 
 int razerd_get_dpi_mappings(razerd_t *r, const char *idstr,
                              razerd_dpi_mapping_t **out, size_t *count_out)
 {
-    (void)r; (void)idstr;
-    *out       = NULL;
-    *count_out = 0;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+
+    int err = send_cmd(r, CMD_SUPPDPIMAPPINGS, idstr, NULL, 0);
+    if (err) goto unlock;
+
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+
+    if (count == 0) {
+        *out       = NULL;
+        *count_out = 0;
+        goto unlock;
+    }
+
+    razerd_dpi_mapping_t *m = calloc(count, sizeof(*m));
+    if (!m) { err = -ENOMEM; goto unlock; }
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t id, dim_mask, pmhi, pmlo, mut;
+        if ((err = recv_u32(r, &id))       != 0) goto fail;
+        if ((err = recv_u32(r, &dim_mask)) != 0) goto fail;
+        m[i].id       = id;
+        m[i].dim_mask = dim_mask;
+        for (uint32_t d = 0; d < RAZERD_NR_DIMS; d++) {
+            uint32_t rv;
+            if ((err = recv_u32(r, &rv)) != 0) goto fail;
+            m[i].res[d] = (dim_mask & (1u << d)) ? rv : 0u;
+        }
+        if ((err = recv_u32(r, &pmhi)) != 0) goto fail;
+        if ((err = recv_u32(r, &pmlo)) != 0) goto fail;
+        m[i].profile_mask = ((uint64_t)pmhi << 32) | pmlo;
+        if ((err = recv_u32(r, &mut)) != 0) goto fail;
+        m[i].mutable = mut != 0;
+        continue;
+fail:
+        /* razerd_dpi_mapping_t contains no heap pointers — flat free */
+        free(m);
+        goto unlock;
+    }
+
+    *out       = m;
+    *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
 }
 
-void razerd_free_dpi_mappings(razerd_dpi_mapping_t *m)
-{
-    free(m);
-}
+void razerd_free_dpi_mappings(razerd_dpi_mapping_t *m) { free(m); }
 
 int razerd_get_dpi_mapping(razerd_t *r, const char *idstr,
                             uint32_t profile_id, uint32_t axis_id,
                             uint32_t *mapping_id_out)
 {
-    (void)r; (void)idstr; (void)profile_id; (void)axis_id;
-    *mapping_id_out = 0;
-    return -ENOSYS;
+    uint32_t payload[2] = { htobe32(profile_id), htobe32(axis_id) };
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_GETDPIMAPPING, idstr, payload, sizeof(payload));
+    if (!err) err = recv_u32(r, mapping_id_out);
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_set_dpi_mapping(razerd_t *r, const char *idstr,
                             uint32_t profile_id, uint32_t mapping_id,
                             uint32_t axis_id)
 {
-    (void)r; (void)idstr; (void)profile_id; (void)mapping_id; (void)axis_id;
-    return -ENOSYS;
+    uint32_t payload[3] = {
+        htobe32(profile_id), htobe32(axis_id), htobe32(mapping_id)
+    };
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SETDPIMAPPING, idstr, payload, sizeof(payload));
+    if (!err) {
+        uint32_t result;
+        err = recv_u32(r, &result);
+        if (!err && result != 0) { r->last_err = (int)result; err = -EIO; }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_change_dpi_mapping(razerd_t *r, const char *idstr,
                                uint32_t mapping_id, uint32_t dim_id,
                                uint32_t new_res)
 {
-    (void)r; (void)idstr; (void)mapping_id; (void)dim_id; (void)new_res;
-    return -ENOSYS;
+    uint32_t payload[3] = {
+        htobe32(mapping_id), htobe32(dim_id), htobe32(new_res)
+    };
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_CHANGEDPIMAPPING, idstr, payload, sizeof(payload));
+    if (!err) {
+        uint32_t result;
+        err = recv_u32(r, &result);
+        if (!err && result != 0) { r->last_err = (int)result; err = -EIO; }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 /* ------------------------------------------------------------------ */
