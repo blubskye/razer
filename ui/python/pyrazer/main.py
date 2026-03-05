@@ -27,6 +27,7 @@ import socket
 import select
 import hashlib
 import struct
+import threading
 
 RAZER_VERSION	= "0.44"
 
@@ -139,7 +140,7 @@ class RazerLEDMode(object):
 	LED_MODE_STATIC				= 0
 	LED_MODE_SPECTRUM			= 1
 	LED_MODE_BREATHING			= 2
-	LED_MODE_WAVE               = 3 
+	LED_MODE_WAVE               = 3
 	LED_MODE_REACTION           = 4
 	def __init__(self, val):
 		self.val = val
@@ -170,7 +171,7 @@ class RazerLEDMode(object):
 			'breathing': cls(cls.LED_MODE_BREATHING),
 			'wave':      cls(cls.LED_MODE_WAVE),
 			'reaction':  cls(cls.LED_MODE_REACTION)
-			
+
 		}[string]
 
 
@@ -305,6 +306,7 @@ class Razer(object):
 		"Connect to razerd."
 		self.enableNotifications = enableNotifications
 		self.notifications = []
+		self._lock = threading.Lock()
 		try:
 			self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 			self.sock.connect(self.SOCKET_PATH)
@@ -438,19 +440,21 @@ class Razer(object):
 		"Returns a list of pending notifications (id, payload)"
 		if not self.enableNotifications:
 			raise RazerEx("Polled notifications while notifications were disabled")
-		while 1:
-			res = select.select([self.sock], [], [], 0.001)
-			if not res[0]:
-				break
-			pack = self.__receive(self.sock)
-			self.__handleReceivedMessage(pack)
-		notifications = self.notifications
-		self.notifications = []
+		with self._lock:
+			while 1:
+				res = select.select([self.sock], [], [], 0.001)
+				if not res[0]:
+					break
+				pack = self.__receive(self.sock)
+				self.__handleReceivedMessage(pack)
+			notifications = self.notifications
+			self.notifications = []
 		return notifications
 
 	def rescanMice(self):
 		"Send the command to rescan for mice to the daemon."
-		self.__sendCommand(self.COMMAND_ID_RESCANMICE)
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_RESCANMICE)
 
 	def rescanDevices(self):
 		"Rescan for new devices."
@@ -458,24 +462,27 @@ class Razer(object):
 
 	def getMice(self):
 		"Returns a list of ID-strings for the detected mice."
-		self.__sendCommand(self.COMMAND_ID_GETMICE)
-		count = self.__recvU32()
-		mice = []
-		for i in range(0, count):
-			mice.append(self.__recvString())
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETMICE)
+			count = self.__recvU32()
+			mice = []
+			for i in range(0, count):
+				mice.append(self.__recvString())
 		return mice
 
 	def getMouseInfo(self, idstr):
 		"Get detailed information about a mouse"
-		self.__sendCommand(self.COMMAND_ID_GETMOUSEINFO, idstr)
-		flags = self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETMOUSEINFO, idstr)
+			flags = self.__recvU32()
 		if (flags & self.MOUSEINFOFLG_RESULTOK) == 0:
 			raise RazerEx("Failed to get mouseinfo for " + idstr)
 		return flags
 
 	def reconfigureMice(self):
 		"Reconfigure all mice."
-		self.__sendCommand(self.COMMAND_ID_RECONFIGMICE)
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_RECONFIGMICE)
 
 	def reconfigureDevices(self):
 		"Reconfigure all devices."
@@ -483,54 +490,59 @@ class Razer(object):
 
 	def getFwVer(self, idstr):
 		"Returns the firmware version. The returned value is a tuple (major, minor)."
-		self.__sendCommand(self.COMMAND_ID_GETFWVER, idstr)
-		rawVer = self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETFWVER, idstr)
+			rawVer = self.__recvU32()
 		return ((rawVer >> 8) & 0xFF, rawVer & 0xFF)
 
 	def getSupportedFreqs(self, idstr):
 		"Returns a list of supported frequencies for a mouse."
-		self.__sendCommand(self.COMMAND_ID_SUPPFREQS, idstr)
-		count = self.__recvU32()
-		freqs = []
-		for i in range(0, count):
-			freqs.append(self.__recvU32())
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SUPPFREQS, idstr)
+			count = self.__recvU32()
+			freqs = []
+			for i in range(0, count):
+				freqs.append(self.__recvU32())
 		return freqs
 
 	def getCurrentFreq(self, idstr, profileId=PROFILE_INVALID):
 		"Returns the currently selected frequency for a mouse."
 		payload = razer_int_to_be32(profileId)
-		self.__sendCommand(self.COMMAND_ID_GETFREQ, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETFREQ, idstr, payload)
+			return self.__recvU32()
 
 	def getSupportedRes(self, idstr):
 		"Returns a list of supported resolutions for a mouse."
-		self.__sendCommand(self.COMMAND_ID_SUPPRESOL, idstr)
-		count = self.__recvU32()
-		res = []
-		for i in range(0, count):
-			res.append(self.__recvU32())
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SUPPRESOL, idstr)
+			count = self.__recvU32()
+			res = []
+			for i in range(0, count):
+				res.append(self.__recvU32())
 		return res
 
 	def getLeds(self, idstr, profileId=PROFILE_INVALID):
 		"""Returns a list of RazerLED instances for the given profile,
 		or the global LEDs, if no profile given"""
 		payload = razer_int_to_be32(profileId)
-		self.__sendCommand(self.COMMAND_ID_GETLEDS, idstr, payload)
-		count = self.__recvU32()
-		leds = []
-		for i in range(0, count):
-			flags = self.__recvU32()
-			name = self.__recvString()
-			state = self.__recvU32()
-			mode = RazerLEDMode(self.__recvU32())
-			supported_modes = RazerLEDMode.listFromSupportedModes(self.__recvU32())
-			color = self.__recvU32()
-			if (flags & self.LED_FLAG_HAVECOLOR) == 0:
-				color = None
-			else:
-				color = RazerRGB.fromU32(color)
-			canChangeColor = bool(flags & self.LED_FLAG_CHANGECOLOR)
-			leds.append(RazerLED(profileId, name, state, mode, supported_modes, color, canChangeColor))
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETLEDS, idstr, payload)
+			count = self.__recvU32()
+			leds = []
+			for i in range(0, count):
+				flags = self.__recvU32()
+				name = self.__recvString()
+				state = self.__recvU32()
+				mode = RazerLEDMode(self.__recvU32())
+				supported_modes = RazerLEDMode.listFromSupportedModes(self.__recvU32())
+				color = self.__recvU32()
+				if (flags & self.LED_FLAG_HAVECOLOR) == 0:
+					color = None
+				else:
+					color = RazerRGB.fromU32(color)
+				canChangeColor = bool(flags & self.LED_FLAG_CHANGECOLOR)
+				leds.append(RazerLED(profileId, name, state, mode, supported_modes, color, canChangeColor))
 		return leds
 
 	def setLed(self, idstr, led):
@@ -547,35 +559,38 @@ class Razer(object):
 			payload += razer_int_to_be32(led.color.toU32())
 		else:
 			payload += razer_int_to_be32(0)
-		self.__sendCommand(self.COMMAND_ID_SETLED, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SETLED, idstr, payload)
+			return self.__recvU32()
 
 	def setFrequency(self, idstr, profileId, newFrequency):
 		"Set a new scan frequency (in Hz)."
 		payload = razer_int_to_be32(profileId) + razer_int_to_be32(newFrequency)
-		self.__sendCommand(self.COMMAND_ID_SETFREQ, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SETFREQ, idstr, payload)
+			return self.__recvU32()
 
 	def getSupportedDpiMappings(self, idstr):
 		"Returns a list of supported DPI mappings. Each entry is a RazerDpiMapping() instance."
-		self.__sendCommand(self.COMMAND_ID_SUPPDPIMAPPINGS, idstr)
-		count = self.__recvU32()
-		mappings = []
-		for i in range(0, count):
-			id = self.__recvU32()
-			dimMask = self.__recvU32()
-			res = []
-			for i in range(0, self.RAZER_NR_DIMS):
-				rVal = self.__recvU32()
-				if (dimMask & (1 << i)) == 0:
-					rVal = None
-				res.append(rVal)
-			profileMaskHigh = self.__recvU32()
-			profileMaskLow = self.__recvU32()
-			profileMask = (profileMaskHigh << 32) | profileMaskLow
-			mutable = self.__recvU32()
-			mappings.append(RazerDpiMapping(
-				id, res, profileMask, mutable))
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SUPPDPIMAPPINGS, idstr)
+			count = self.__recvU32()
+			mappings = []
+			for i in range(0, count):
+				id = self.__recvU32()
+				dimMask = self.__recvU32()
+				res = []
+				for i in range(0, self.RAZER_NR_DIMS):
+					rVal = self.__recvU32()
+					if (dimMask & (1 << i)) == 0:
+						rVal = None
+					res.append(rVal)
+				profileMaskHigh = self.__recvU32()
+				profileMaskLow = self.__recvU32()
+				profileMask = (profileMaskHigh << 32) | profileMaskLow
+				mutable = self.__recvU32()
+				mappings.append(RazerDpiMapping(
+					id, res, profileMask, mutable))
 		return mappings
 
 	def changeDpiMapping(self, idstr, mappingId, dimensionId, newResolution):
@@ -583,8 +598,9 @@ class Razer(object):
 		payload = razer_int_to_be32(mappingId) +\
 			  razer_int_to_be32(dimensionId) +\
 			  razer_int_to_be32(newResolution)
-		self.__sendCommand(self.COMMAND_ID_CHANGEDPIMAPPING, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_CHANGEDPIMAPPING, idstr, payload)
+			return self.__recvU32()
 
 	def getDpiMapping(self, idstr, profileId, axisId=None):
 		"Gets the resolution mapping of a profile."
@@ -592,8 +608,9 @@ class Razer(object):
 			axisId = 0xFFFFFFFF
 		payload = razer_int_to_be32(profileId) +\
 			  razer_int_to_be32(axisId)
-		self.__sendCommand(self.COMMAND_ID_GETDPIMAPPING, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETDPIMAPPING, idstr, payload)
+			return self.__recvU32()
 
 	def setDpiMapping(self, idstr, profileId, mappingId, axisId=None):
 		"Sets the resolution mapping of a profile."
@@ -602,34 +619,39 @@ class Razer(object):
 		payload = razer_int_to_be32(profileId) +\
 			  razer_int_to_be32(axisId) +\
 			  razer_int_to_be32(mappingId)
-		self.__sendCommand(self.COMMAND_ID_SETDPIMAPPING, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SETDPIMAPPING, idstr, payload)
+			return self.__recvU32()
 
 	def getProfiles(self, idstr):
 		"Returns a list of profiles. Each entry is the profile ID."
-		self.__sendCommand(self.COMMAND_ID_GETPROFILES, idstr)
-		count = self.__recvU32()
-		profiles = []
-		for i in range(0, count):
-			profiles.append(self.__recvU32())
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETPROFILES, idstr)
+			count = self.__recvU32()
+			profiles = []
+			for i in range(0, count):
+				profiles.append(self.__recvU32())
 		return profiles
 
 	def getActiveProfile(self, idstr):
 		"Returns the ID of the active profile."
-		self.__sendCommand(self.COMMAND_ID_GETACTIVEPROF, idstr)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETACTIVEPROF, idstr)
+			return self.__recvU32()
 
 	def setActiveProfile(self, idstr, profileId):
 		"Selects the active profile."
 		payload = razer_int_to_be32(profileId)
-		self.__sendCommand(self.COMMAND_ID_SETACTIVEPROF, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SETACTIVEPROF, idstr, payload)
+			return self.__recvU32()
 
 	def getProfileName(self, idstr, profileId):
 		"Get a profile name."
 		payload = razer_int_to_be32(profileId)
-		self.__sendCommand(self.COMMAND_ID_GETPROFNAME, idstr, payload)
-		return self.__recvString()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETPROFNAME, idstr, payload)
+			return self.__recvString()
 
 	def setProfileName(self, idstr, profileId, newName):
 		"Set a profile name. newName is expected to be unicode."
@@ -638,44 +660,49 @@ class Razer(object):
 		rawstr = rawstr[:min(len(rawstr), 64 * 2)]
 		rawstr += b'\0' * (64 * 2 - len(rawstr))
 		payload += rawstr
-		self.__sendCommand(self.COMMAND_ID_SETPROFNAME, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SETPROFNAME, idstr, payload)
+			return self.__recvU32()
 
 	def flashFirmware(self, idstr, image):
 		"Flash a new firmware on the device. Needs high privileges!"
 		payload = razer_int_to_be32(len(image))
-		self.__sendPrivilegedCommand(self.COMMAND_PRIV_FLASHFW, idstr, payload)
-		self.__sendBulkPrivileged(image)
-		return self.__recvU32Privileged()
+		with self._lock:
+			self.__sendPrivilegedCommand(self.COMMAND_PRIV_FLASHFW, idstr, payload)
+			self.__sendBulkPrivileged(image)
+			return self.__recvU32Privileged()
 
 	def getSupportedButtons(self, idstr):
 		"Get a list of supported buttons. Each entry is a tuple (id, name)."
-		self.__sendCommand(self.COMMAND_ID_SUPPBUTTONS, idstr)
-		buttons = []
-		count = self.__recvU32()
-		for i in range(0, count):
-			id = self.__recvU32()
-			name = self.__recvString()
-			buttons.append( (id, name) )
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SUPPBUTTONS, idstr)
+			buttons = []
+			count = self.__recvU32()
+			for i in range(0, count):
+				id = self.__recvU32()
+				name = self.__recvString()
+				buttons.append( (id, name) )
 		return buttons
 
 	def getSupportedButtonFunctions(self, idstr):
 		"Get a list of possible button functions. Each entry is a tuple (id, name)."
-		self.__sendCommand(self.COMMAND_ID_SUPPBUTFUNCS, idstr)
-		funcs = []
-		count = self.__recvU32()
-		for i in range(0, count):
-			id = self.__recvU32()
-			name = self.__recvString()
-			funcs.append( (id, name) )
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SUPPBUTFUNCS, idstr)
+			funcs = []
+			count = self.__recvU32()
+			for i in range(0, count):
+				id = self.__recvU32()
+				name = self.__recvString()
+				funcs.append( (id, name) )
 		return funcs
 
 	def getButtonFunction(self, idstr, profileId, buttonId):
 		"Get a button function. Returns a tuple (id, name)."
 		payload = razer_int_to_be32(profileId) + razer_int_to_be32(buttonId)
-		self.__sendCommand(self.COMMAND_ID_GETBUTFUNC, idstr, payload)
-		id = self.__recvU32()
-		name = self.__recvString()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_GETBUTFUNC, idstr, payload)
+			id = self.__recvU32()
+			name = self.__recvString()
 		return (id, name)
 
 	def setButtonFunction(self, idstr, profileId, buttonId, functionId):
@@ -683,19 +710,21 @@ class Razer(object):
 		payload = razer_int_to_be32(profileId) +\
 			  razer_int_to_be32(buttonId) +\
 			  razer_int_to_be32(functionId)
-		self.__sendCommand(self.COMMAND_ID_SETBUTFUNC, idstr, payload)
-		return self.__recvU32()
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SETBUTFUNC, idstr, payload)
+			return self.__recvU32()
 
 	def getSupportedAxes(self, idstr):
 		"Get a list of axes on the device. Each entry is a tuple (id, name, flags)."
-		self.__sendCommand(self.COMMAND_ID_SUPPAXES, idstr)
-		axes = []
-		count = self.__recvU32()
-		for i in range(0, count):
-			id = self.__recvU32()
-			name = self.__recvString()
-			flags = self.__recvU32()
-			axes.append( (id, name, flags) )
+		with self._lock:
+			self.__sendCommand(self.COMMAND_ID_SUPPAXES, idstr)
+			axes = []
+			count = self.__recvU32()
+			for i in range(0, count):
+				id = self.__recvU32()
+				name = self.__recvString()
+				flags = self.__recvU32()
+				axes.append( (id, name, flags) )
 		return axes
 
 class IHEXParser(object):

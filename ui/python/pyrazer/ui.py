@@ -12,6 +12,7 @@
 #   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #   GNU General Public License for more details.
 
+import copy
 import sys
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
@@ -29,6 +30,40 @@ except:
 	sys.exit(1)
 
 razer = None
+
+# ---------------------------------------------------------------------------
+# Async worker helpers
+# ---------------------------------------------------------------------------
+
+class _WorkerSignals(QObject):
+	finished = pyqtSignal(object)
+
+class _Worker(QRunnable):
+	"""Run fn(*args, **kwargs) on a thread-pool thread.
+	Emits signals.finished(result) on completion (result may be an Exception).
+	The finished signal is delivered to the Qt main thread via the event loop."""
+	def __init__(self, fn, *args, **kwargs):
+		super().__init__()
+		self._fn = fn
+		self._args = args
+		self._kwargs = kwargs
+		self.signals = _WorkerSignals()
+		self.setAutoDelete(True)
+
+	def run(self):
+		try:
+			result = self._fn(*self._args, **self._kwargs)
+		except Exception as e:
+			result = e
+		self.signals.finished.emit(result)
+
+def _run_async(fn, on_done, *args, **kwargs):
+	"""Dispatch fn to the global thread pool; call on_done(result) on the main thread."""
+	w = _Worker(fn, *args, **kwargs)
+	w.signals.finished.connect(on_done)
+	QThreadPool.globalInstance().start(w)
+
+# ---------------------------------------------------------------------------
 
 class Wrapper(object):
 	def __init__(self, obj):
@@ -52,6 +87,10 @@ class WrappedComboBox(QComboBox):
 			if self.itemData(i) == dataObj:
 				return i
 		return -1
+
+# ---------------------------------------------------------------------------
+# Button configuration dialog
+# ---------------------------------------------------------------------------
 
 class OneButtonConfig(QWidget):
 	def __init__(self, id, name, supportedFunctions, buttonConfWidget):
@@ -118,25 +157,56 @@ class ButtonConfDialog(QDialog):
 
 		h = QHBoxLayout()
 		self.applyButton = QPushButton(self.tr("Apply"), self)
-		self.applyButton.clicked.connect(self.apply)
+		self.applyButton.clicked.connect(self._onApply)
 		h.addWidget(self.applyButton)
 		self.cancelButton = QPushButton(self.tr("Cancel"), self)
-		self.cancelButton.clicked.connect(self.cancel)
+		self.cancelButton.clicked.connect(self._onCancel)
 		h.addWidget(self.cancelButton)
 		self.layout().addLayout(h)
 
-	def cancel(self):
+		self._status = QLabel(self)
+		self.layout().addWidget(self._status)
+
+	def _onCancel(self):
 		self.done(0)
 
-	def apply(self):
-		for button in self.buttons:
-			func = button.getSelectedFunction()
-			if func != button.getInitialFunction():
-				razer.setButtonFunction(self.profileWidget.mouseWidget.mouse,
-							self.profileWidget.profileId,
-							button.getId(),
-							func)
-		self.done(1)
+	def _onApply(self):
+		changes = [(b.getId(), b.getSelectedFunction())
+		           for b in self.buttons
+		           if b.getSelectedFunction() != b.getInitialFunction()]
+		if not changes:
+			self.done(1)
+			return
+
+		mouse     = self.profileWidget.mouseWidget.mouse
+		profileId = self.profileWidget.profileId
+
+		self.applyButton.setEnabled(False)
+		self.cancelButton.setEnabled(False)
+		self._status.setText(self.tr("Applying…"))
+
+		def work():
+			errors = 0
+			for bid, func in changes:
+				if razer.setButtonFunction(mouse, profileId, bid, func):
+					errors += 1
+			return errors
+
+		def on_done(result):
+			self.applyButton.setEnabled(True)
+			self.cancelButton.setEnabled(True)
+			if isinstance(result, Exception):
+				self._status.setText(self.tr("Error: %s") % result)
+			elif result:
+				self._status.setText(self.tr("%d button(s) failed to apply.") % result)
+			else:
+				self.done(1)
+
+		_run_async(work, on_done)
+
+# ---------------------------------------------------------------------------
+# LED widgets
+# ---------------------------------------------------------------------------
 
 class OneLedConfig(QWidget):
 	def __init__(self, ledsWidget, led):
@@ -158,26 +228,29 @@ class OneLedConfig(QWidget):
 			for mode in led.supported_modes:
 				self.modeComBox.addItem(mode.toString(), mode.val)
 
-			self.modeComBox.currentIndexChanged.connect(self.modeChanged)
+			self.modeComBox.currentIndexChanged.connect(self._modeChanged)
 
 			index = self.modeComBox.findData(led.mode.val)
 			if index >= 0:
 				self.modeComBox.setCurrentIndex(index)
-
+		else:
+			self.modeComBox = None
 
 		if led.color is not None and led.canChangeColor:
 			self.colorPb = QPushButton(self.tr("change color..."), self)
 			self.layout().addWidget(self.colorPb, 0, 2)
+			self.colorPb.released.connect(self._colorChangePressed)
+		else:
+			self.colorPb = None
 
-			self.colorPb.released.connect(self.colorChangePressed)
+		# Connect state change last so initial setCheckState doesn't fire it
+		self.stateCb.stateChanged.connect(self._toggled)
 
-		self.stateCb.stateChanged.connect(self.toggled)
-
-	def toggled(self, state):
+	# These callbacks only update local state — no razerd calls.
+	def _toggled(self, state):
 		self.led.state = bool(state)
-		razer.setLed(self.ledsWidget.mouseWidget.mouse, self.led)
 
-	def colorChangePressed(self):
+	def _colorChangePressed(self):
 		c = QColor(self.led.color.r, self.led.color.g, self.led.color.b)
 		c = QColorDialog.getColor(c, self, self.led.name + self.tr(" color"))
 		if not c.isValid():
@@ -185,11 +258,10 @@ class OneLedConfig(QWidget):
 		self.led.color.r = c.red()
 		self.led.color.g = c.green()
 		self.led.color.b = c.blue()
-		razer.setLed(self.ledsWidget.mouseWidget.mouse, self.led)
 
-	def modeChanged(self, currentIndex):
-		self.led.mode.val = self.modeComBox.itemData(currentIndex)
-		razer.setLed(self.ledsWidget.mouseWidget.mouse, self.led)
+	def _modeChanged(self, currentIndex):
+		if self.modeComBox:
+			self.led.mode.val = self.modeComBox.itemData(currentIndex)
 
 class LedsWidget(QGroupBox):
 	def __init__(self, parent, mouseWidget):
@@ -199,16 +271,27 @@ class LedsWidget(QGroupBox):
 		self.setLayout(QVBoxLayout(self))
 		self.leds = []
 
+		row = QHBoxLayout()
+		self._applyBtn = QPushButton(self.tr("Apply"))
+		self._applyBtn.clicked.connect(self._onApply)
+		row.addWidget(self._applyBtn)
+		row.addStretch()
+		self._status = QLabel()
+		row.addWidget(self._status)
+		self.layout().addLayout(row)
+
 	def clear(self):
 		for led in self.leds:
 			led.deleteLater()
 		self.leds = []
+		self._status.setText("")
 		self.setEnabled(False)
 		self.hide()
 
 	def add(self, led):
 		oneLed = OneLedConfig(self, led)
-		self.layout().addWidget(oneLed)
+		# Insert before the Apply row (last layout item)
+		self.layout().insertWidget(self.layout().count() - 1, oneLed)
 		self.leds.append(oneLed)
 		self.setEnabled(True)
 		self.show()
@@ -218,265 +301,40 @@ class LedsWidget(QGroupBox):
 			self.add(led)
 			self.show()
 
-#TODO profile name
-class MouseProfileWidget(QWidget):
-	def __init__(self, mouseWidget, profileId):
-		QWidget.__init__(self, mouseWidget)
-		self.mouseWidget = mouseWidget
-		self.profileId = profileId
-
-		minfo = razer.getMouseInfo(mouseWidget.mouse)
-
-		self.setLayout(QGridLayout(self))
-		yoff = 0
-
-		self.profileActive = QRadioButton(self.tr("Profile active"), self)
-		self.profileActive.toggled.connect(self.activeChanged)
-		self.layout().addWidget(self.profileActive, yoff, 0)
-		yoff += 1
-
-		self.freqSel = None
-		if minfo & Razer.MOUSEINFOFLG_PROFILE_FREQ:
-			self.freqSel = MouseScanFreqWidget(self, mouseWidget, profileId)
-			self.layout().addWidget(self.freqSel, yoff, 0, 1, 2)
-			yoff += 1
-
-		self.resSel = []
-		axes = self.__getIndependentAxes()
-		for axis in axes:
-			axisName = axis[1] + " " if axis[1] else ""
-			self.layout().addWidget(QLabel(self.tr("%sScan resolution:" % axisName), self), yoff, 0)
-			resSel = WrappedComboBox(self)
-			resSel.currentIndexChanged.connect(self.resChanged)
-			self.layout().addWidget(resSel, yoff, 1)
-			self.resSel.append(resSel)
-			yoff += 1
-		self.resIndependent = QCheckBox(self.tr("Independent resolutions"), self)
-		self.resIndependent.stateChanged.connect(self.resIndependentChanged)
-		self.layout().addWidget(self.resIndependent, yoff, 1)
-		yoff += 1
-		if len(axes) <= 1:
-			self.resIndependent.hide()
-
-		funcs = razer.getSupportedButtonFunctions(self.mouseWidget.mouse)
-		if funcs:
-			self.buttonConf = QPushButton(self.tr("Configure buttons"), self)
-			self.buttonConf.clicked.connect(self.showButtonConf)
-			self.layout().addWidget(self.buttonConf, yoff, 0, 1, 2)
-			yoff += 1
-
-		if minfo & Razer.MOUSEINFOFLG_PROFNAMEMUTABLE:
-			self.buttonName = QPushButton(self.tr("Change profile name"), self)
-			self.buttonName.clicked.connect(self.nameChange)
-			self.layout().addWidget(self.buttonName, yoff, 0, 1, 2)
-			yoff += 1
-
-		self.dpimappings = MouseDpiMappingsWidget(self, mouseWidget)
-		self.layout().addWidget(self.dpimappings, yoff, 0, 1, 2)
-		yoff += 1
-
-		self.leds = LedsWidget(self, mouseWidget)
-		self.layout().addWidget(self.leds, yoff, 0, 1, 2)
-		yoff += 1
-
-	def __getIndependentAxes(self):
-		axes = razer.getSupportedAxes(self.mouseWidget.mouse)
-		axes = [axis for axis in axes if (axis[2] & Razer.RAZER_AXIS_INDEPENDENT_DPIMAPPING)]
-		if not axes:
-			axes = [ (0, "", 0) ]
-		return axes
-
-	def reload(self):
-		# Refetch the data from the daemon
-		self.mouseWidget.recurseProtect += 1
-
-		# Frequency selection (if any)
-		if self.freqSel:
-			self.freqSel.updateContent()
-
-		# Resolution selection
-		for resSel in self.resSel:
-			resSel.clear()
-		supportedMappings = razer.getSupportedDpiMappings(self.mouseWidget.mouse)
-		supportedMappings = [m for m in supportedMappings if (m.profileMask == 0) or\
-						     (m.profileMask & (1 << self.profileId))]
-		axisMappings = []
-		for axis in self.__getIndependentAxes():
-			axisMappings.append(razer.getDpiMapping(self.mouseWidget.mouse,
-								self.profileId,
-								axis[0]))
-		for i, resSel in enumerate(self.resSel):
-			resSel.addItem(self.tr("Unknown mapping"), 0xFFFFFFFF)
-			for mapping in supportedMappings:
-				r = [ r for r in mapping.res if r is not None ]
-				r = [ ("%u" % x) if x else self.tr("Unknown") for x in r]
-				rStr = "/".join(r)
-				resSel.addItem(self.tr("Scan resolution %u   (%s DPI)" %\
-						(mapping.id + 1, rStr)),
-						mapping.id)
-			index = resSel.findData(axisMappings[i])
-			if index >= 0:
-				resSel.setCurrentIndex(index)
-		independent = bool([x for x in axisMappings if x != axisMappings[0]])
-		if independent:
-			self.resIndependent.setCheckState(Qt.CheckState.Checked)
-		else:
-			self.resIndependent.setCheckState(Qt.CheckState.Unchecked)
-		self.resIndependentChanged()
-
-		# Profile selection
-		activeProf = razer.getActiveProfile(self.mouseWidget.mouse)
-		self.profileActive.setChecked(activeProf == self.profileId)
-
-		# Per-profile DPI mappings (if any)
-		self.dpimappings.clear()
-		self.dpimappings.updateContent(self.profileId)
-
-		# Per-profile LEDs (if any)
-		self.leds.clear()
-		self.leds.updateContent(self.profileId)
-
-		self.mouseWidget.recurseProtect -= 1
-
-	def activeChanged(self, checked):
-		if self.mouseWidget.recurseProtect:
+	def _onApply(self):
+		if not self.leds:
 			return
-		if not checked:
-			# Cannot disable
-			self.mouseWidget.recurseProtect += 1
-			self.profileActive.setChecked(1)
-			self.mouseWidget.recurseProtect -= 1
-			return
-		razer.setActiveProfile(self.mouseWidget.mouse, self.profileId)
-		self.mouseWidget.reloadProfiles()
+		# Snapshot all LED state on the main thread before dispatching
+		mouse    = self.mouseWidget.mouse
+		led_copies = [copy.deepcopy(lw.led) for lw in self.leds]
 
-	def resChanged(self, unused=None):
-		if self.mouseWidget.recurseProtect:
-			return
-		if self.resIndependent.checkState() == Qt.CheckState.Checked:
-			axisId = 0
-			for resSel in self.resSel:
-				index = resSel.currentIndex()
-				res = resSel.itemData(index)
-				razer.setDpiMapping(self.mouseWidget.mouse, self.profileId,
-						    res, axisId)
-				axisId += 1
-		else:
-			index = self.resSel[0].currentIndex()
-			res = self.resSel[0].itemData(index)
-			razer.setDpiMapping(self.mouseWidget.mouse, self.profileId, res)
-			for resSel in self.resSel[1:]:
-				self.mouseWidget.recurseProtect += 1
-				resSel.setCurrentIndex(index)
-				self.mouseWidget.recurseProtect -= 1
+		self._applyBtn.setEnabled(False)
+		self._status.setText(self.tr("Applying…"))
 
-	def resIndependentChanged(self, _=None):
-		if self.resIndependent.checkState() == Qt.CheckState.Checked:
-			for resSel in self.resSel[1:]:
-				resSel.setEnabled(True)
-		else:
-			for resSel in self.resSel[1:]:
-				resSel.setEnabled(False)
-		self.resChanged()
+		def work():
+			errors = 0
+			for led in led_copies:
+				try:
+					if razer.setLed(mouse, led):
+						errors += 1
+				except Exception:
+					errors += 1
+			return errors
 
-	def showButtonConf(self, checked):
-		bconf = ButtonConfDialog(self)
-		bconf.exec()
+		def on_done(result):
+			self._applyBtn.setEnabled(True)
+			if isinstance(result, Exception):
+				self._status.setText(self.tr("Error: %s") % result)
+			elif result:
+				self._status.setText(self.tr("%d LED(s) failed.") % result)
+			else:
+				self._status.setText(self.tr("LEDs applied."))
 
-	def nameChange(self, unused):
-		name = razer.getProfileName(self.mouseWidget.mouse, self.profileId)
-		(newName, ok) = QInputDialog.getText(self, self.tr("New profile name"),
-						     self.tr("New profile name:"),
-						     QLineEdit.EchoMode.Normal,
-						     name)
-		if not ok:
-			return
-		razer.setProfileName(self.mouseWidget.mouse, self.profileId, newName)
-		self.mouseWidget.reloadProfiles()
+		_run_async(work, on_done)
 
-class OneDpiMapping(QWidget):
-	def __init__(self, dpiMappingsWidget, dpimapping):
-		QWidget.__init__(self, dpiMappingsWidget)
-		self.setContentsMargins(QMargins())
-		self.dpiMappingsWidget = dpiMappingsWidget
-		self.dpimapping = dpimapping
-
-		self.setLayout(QHBoxLayout(self))
-		self.layout().setContentsMargins(QMargins())
-
-		self.layout().addWidget(QLabel(self.tr("Scan resolution %u:" % (dpimapping.id + 1)),
-					self))
-		supportedRes = razer.getSupportedRes(self.dpiMappingsWidget.mouseWidget.mouse)
-		haveMultipleDims = len([r for r in dpimapping.res if r is not None]) > 1
-		dimNames = ( "X", "Y", "Z" )
-		changeSlots = ( self.changedDim0, self.changedDim1, self.changedDim2 )
-		for dimIdx, thisRes in enumerate([r for r in dpimapping.res if r is not None]):
-			self.mappingSel = WrappedComboBox(self)
-			name = self.tr("Unknown DPI")
-			if haveMultipleDims:
-				name = dimNames[dimIdx] + ": " + name
-			self.mappingSel.addItem(name, 0)
-			for res in supportedRes:
-				name = self.tr("%u DPI" % res)
-				if haveMultipleDims:
-					name = dimNames[dimIdx] + ": " + name
-				self.mappingSel.addItem(name, res)
-			index = self.mappingSel.findData(thisRes)
-			if index >= 0:
-				self.mappingSel.setCurrentIndex(index)
-			self.mappingSel.currentIndexChanged.connect(changeSlots[dimIdx])
-			self.mappingSel.setEnabled(dpimapping.mutable)
-			self.layout().addWidget(self.mappingSel)
-		self.layout().addStretch()
-
-	def changedDim0(self, index):
-		self.changed(index, 0)
-
-	def changedDim1(self, index):
-		self.changed(index, 1)
-
-	def changedDim2(self, index):
-		self.changed(index, 2)
-
-	def changed(self, index, dimIdx):
-		if index <= 0:
-			return
-		resolution = self.mappingSel.itemData(index)
-		razer.changeDpiMapping(self.dpiMappingsWidget.mouseWidget.mouse,
-				       self.dpimapping.id,
-				       dimIdx,
-				       resolution)
-		self.dpiMappingsWidget.mouseWidget.reloadProfiles()
-
-class MouseDpiMappingsWidget(QGroupBox):
-	def __init__(self, parent, mouseWidget):
-		QGroupBox.__init__(self, parent.tr("Possible scan resolutions"), parent)
-		self.mouseWidget = mouseWidget
-
-		self.setLayout(QVBoxLayout(self))
-		self.mappings = []
-		self.clear()
-
-	def clear(self):
-		for mapping in self.mappings:
-			mapping.deleteLater()
-		self.mappings = []
-		self.setEnabled(False)
-		self.hide()
-
-	def add(self, dpimapping):
-		mapping = OneDpiMapping(self, dpimapping)
-		self.mappings.append(mapping)
-		self.layout().addWidget(mapping)
-		if dpimapping.mutable:
-			self.setEnabled(True)
-			self.show()
-
-	def updateContent(self, profileId=Razer.PROFILE_INVALID):
-		for dpimapping in razer.getSupportedDpiMappings(self.mouseWidget.mouse):
-			if (profileId == Razer.PROFILE_INVALID and dpimapping.profileMask == 0) or\
-			   (profileId != Razer.PROFILE_INVALID and dpimapping.profileMask & (1 << profileId)):
-				self.add(dpimapping)
+# ---------------------------------------------------------------------------
+# Frequency widget
+# ---------------------------------------------------------------------------
 
 class MouseScanFreqWidget(QWidget):
 	def __init__(self, parent, mouseWidget, profileId=Razer.PROFILE_INVALID):
@@ -492,13 +350,14 @@ class MouseScanFreqWidget(QWidget):
 		self.freqSel = WrappedComboBox(self)
 		self.layout().addWidget(self.freqSel, 0, 1)
 
-		self.freqSel.currentIndexChanged.connect(self.freqChanged)
-
-	def freqChanged(self, index):
-		if self.mouseWidget.recurseProtect or index <= 0:
-			return
-		freq = self.freqSel.itemData(index)
-		razer.setFrequency(self.mouseWidget.mouse, self.profileId, freq)
+		row = QHBoxLayout()
+		self._applyBtn = QPushButton(self.tr("Apply"))
+		self._applyBtn.clicked.connect(self._onApply)
+		row.addWidget(self._applyBtn)
+		row.addStretch()
+		self._status = QLabel()
+		row.addWidget(self._status)
+		self.layout().addLayout(row, 1, 0, 1, 2)
 
 	def updateContent(self):
 		self.mouseWidget.recurseProtect += 1
@@ -514,6 +373,485 @@ class MouseScanFreqWidget(QWidget):
 			self.freqSel.setCurrentIndex(index)
 
 		self.mouseWidget.recurseProtect -= 1
+
+	def _onApply(self):
+		idx = self.freqSel.currentIndex()
+		if idx < 0:
+			return
+		freq = self.freqSel.itemData(idx)
+		if not freq:
+			self._status.setText(self.tr("No frequency selected."))
+			return
+
+		mouse     = self.mouseWidget.mouse
+		profileId = self.profileId
+
+		self._applyBtn.setEnabled(False)
+		self._status.setText(self.tr("Applying…"))
+
+		def work():
+			return razer.setFrequency(mouse, profileId, freq)
+
+		def on_done(result):
+			self._applyBtn.setEnabled(True)
+			if isinstance(result, Exception):
+				self._status.setText(self.tr("Error: %s") % result)
+			elif result:
+				self._status.setText(self.tr("Error %d setting frequency.") % result)
+			else:
+				self._status.setText(self.tr("Frequency applied."))
+
+		_run_async(work, on_done)
+
+# ---------------------------------------------------------------------------
+# DPI mapping widgets
+# ---------------------------------------------------------------------------
+
+class OneDpiMapping(QWidget):
+	def __init__(self, dpiMappingsWidget, dpimapping, supportedRes=None):
+		QWidget.__init__(self, dpiMappingsWidget)
+		self.setContentsMargins(QMargins())
+		self.dpiMappingsWidget = dpiMappingsWidget
+		self.dpimapping = dpimapping
+		# pending changes: dimIdx -> (mappingId, dimIdx, newResolution)
+		self._changes = {}
+
+		self.setLayout(QHBoxLayout(self))
+		self.layout().setContentsMargins(QMargins())
+
+		self.layout().addWidget(QLabel(self.tr("Scan resolution %u:" % (dpimapping.id + 1)),
+					self))
+
+		# Lazily fetch supportedRes if not pre-supplied
+		if supportedRes is None:
+			supportedRes = razer.getSupportedRes(self.dpiMappingsWidget.mouseWidget.mouse)
+
+		haveMultipleDims = len([r for r in dpimapping.res if r is not None]) > 1
+		dimNames = ( "X", "Y", "Z" )
+		changeSlots = ( self._changedDim0, self._changedDim1, self._changedDim2 )
+
+		self._combos = []
+		for dimIdx, thisRes in enumerate([r for r in dpimapping.res if r is not None]):
+			combo = WrappedComboBox(self)
+			self._combos.append(combo)
+			name = self.tr("Unknown DPI")
+			if haveMultipleDims:
+				name = dimNames[dimIdx] + ": " + name
+			combo.addItem(name, 0)
+			for res in supportedRes:
+				resName = self.tr("%u DPI" % res)
+				if haveMultipleDims:
+					resName = dimNames[dimIdx] + ": " + resName
+				combo.addItem(resName, res)
+			index = combo.findData(thisRes)
+			if index >= 0:
+				combo.setCurrentIndex(index)
+			combo.currentIndexChanged.connect(changeSlots[dimIdx])
+			combo.setEnabled(dpimapping.mutable)
+			self.layout().addWidget(combo)
+		self.layout().addStretch()
+
+	def _changedDim0(self, index):
+		self._changed(index, 0)
+
+	def _changedDim1(self, index):
+		self._changed(index, 1)
+
+	def _changedDim2(self, index):
+		self._changed(index, 2)
+
+	def _changed(self, index, dimIdx):
+		if index <= 0 or dimIdx >= len(self._combos):
+			return
+		resolution = self._combos[dimIdx].itemData(index)
+		self._changes[dimIdx] = (self.dpimapping.id, dimIdx, resolution)
+
+	def getPendingChanges(self):
+		"Return list of (mappingId, dimIdx, resolution) tuples for changed dims."
+		return list(self._changes.values())
+
+	def clearPendingChanges(self):
+		self._changes.clear()
+
+class MouseDpiMappingsWidget(QGroupBox):
+	def __init__(self, parent, mouseWidget):
+		QGroupBox.__init__(self, parent.tr("Possible scan resolutions"), parent)
+		self.mouseWidget = mouseWidget
+
+		self.setLayout(QVBoxLayout(self))
+		self.mappings = []
+		self.clear()
+
+	def clear(self):
+		for mapping in self.mappings:
+			mapping.deleteLater()
+		self.mappings = []
+		if hasattr(self, '_status'):
+			self._status.setText("")
+		self.setEnabled(False)
+		self.hide()
+
+	def add(self, dpimapping, supportedRes=None):
+		mapping = OneDpiMapping(self, dpimapping, supportedRes)
+		self.mappings.append(mapping)
+		# Insert before the Apply row
+		self.layout().insertWidget(self.layout().count() - 1, mapping)
+		if dpimapping.mutable:
+			self.setEnabled(True)
+			self.show()
+
+	def _ensureApplyRow(self):
+		if not hasattr(self, '_applyBtn'):
+			row = QHBoxLayout()
+			self._applyBtn = QPushButton(self.tr("Apply"))
+			self._applyBtn.clicked.connect(self._onApply)
+			row.addWidget(self._applyBtn)
+			row.addStretch()
+			self._status = QLabel()
+			row.addWidget(self._status)
+			self.layout().addLayout(row)
+
+	def updateContent(self, profileId=Razer.PROFILE_INVALID):
+		self._ensureApplyRow()
+		for dpimapping in razer.getSupportedDpiMappings(self.mouseWidget.mouse):
+			if (profileId == Razer.PROFILE_INVALID and dpimapping.profileMask == 0) or\
+			   (profileId != Razer.PROFILE_INVALID and dpimapping.profileMask & (1 << profileId)):
+				self.add(dpimapping)
+
+	def _onApply(self):
+		all_changes = []
+		for m in self.mappings:
+			all_changes.extend(m.getPendingChanges())
+		if not all_changes:
+			self._status.setText(self.tr("No changes to apply."))
+			return
+
+		mouse = self.mouseWidget.mouse
+		changes_snapshot = list(all_changes)
+
+		self._applyBtn.setEnabled(False)
+		self._status.setText(self.tr("Applying…"))
+
+		def work():
+			errors = 0
+			for mappingId, dimIdx, res in changes_snapshot:
+				try:
+					if razer.changeDpiMapping(mouse, mappingId, dimIdx, res):
+						errors += 1
+				except Exception:
+					errors += 1
+			return errors
+
+		def on_done(result):
+			self._applyBtn.setEnabled(True)
+			if isinstance(result, Exception):
+				self._status.setText(self.tr("Error: %s") % result)
+			elif result:
+				self._status.setText(self.tr("%d mapping(s) failed.") % result)
+			else:
+				for m in self.mappings:
+					m.clearPendingChanges()
+				self._status.setText(self.tr("Applied."))
+
+		_run_async(work, on_done)
+
+# ---------------------------------------------------------------------------
+# Per-profile widget
+# ---------------------------------------------------------------------------
+
+class MouseProfileWidget(QWidget):
+	def __init__(self, mouseWidget, profileId):
+		QWidget.__init__(self, mouseWidget)
+		self.mouseWidget = mouseWidget
+		self.profileId = profileId
+
+		minfo = razer.getMouseInfo(mouseWidget.mouse)
+
+		self.setLayout(QGridLayout(self))
+		yoff = 0
+
+		self.profileActive = QRadioButton(self.tr("Profile active"), self)
+		self.profileActive.toggled.connect(self._activeChanged)
+		self.layout().addWidget(self.profileActive, yoff, 0)
+		yoff += 1
+
+		self.freqSel = None
+		if minfo & Razer.MOUSEINFOFLG_PROFILE_FREQ:
+			self.freqSel = MouseScanFreqWidget(self, mouseWidget, profileId)
+			self.layout().addWidget(self.freqSel, yoff, 0, 1, 2)
+			yoff += 1
+
+		self.resSel = []
+		axes = self._getIndependentAxes()
+		for axis in axes:
+			axisName = axis[1] + " " if axis[1] else ""
+			self.layout().addWidget(QLabel(self.tr("%sScan resolution:" % axisName), self), yoff, 0)
+			resSel = WrappedComboBox(self)
+			resSel.currentIndexChanged.connect(self._resChanged)
+			self.layout().addWidget(resSel, yoff, 1)
+			self.resSel.append(resSel)
+			yoff += 1
+		self.resIndependent = QCheckBox(self.tr("Independent resolutions"), self)
+		self.resIndependent.stateChanged.connect(self._resIndependentChanged)
+		self.layout().addWidget(self.resIndependent, yoff, 1)
+		yoff += 1
+		if len(axes) <= 1:
+			self.resIndependent.hide()
+
+		funcs = razer.getSupportedButtonFunctions(self.mouseWidget.mouse)
+		if funcs:
+			self.buttonConf = QPushButton(self.tr("Configure buttons"), self)
+			self.buttonConf.clicked.connect(self._showButtonConf)
+			self.layout().addWidget(self.buttonConf, yoff, 0, 1, 2)
+			yoff += 1
+
+		if minfo & Razer.MOUSEINFOFLG_PROFNAMEMUTABLE:
+			self.buttonName = QPushButton(self.tr("Change profile name"), self)
+			self.buttonName.clicked.connect(self._nameChange)
+			self.layout().addWidget(self.buttonName, yoff, 0, 1, 2)
+			yoff += 1
+
+		self.dpimappings = MouseDpiMappingsWidget(self, mouseWidget)
+		self.dpimappings._ensureApplyRow()
+		self.layout().addWidget(self.dpimappings, yoff, 0, 1, 2)
+		yoff += 1
+
+		self.leds = LedsWidget(self, mouseWidget)
+		self.layout().addWidget(self.leds, yoff, 0, 1, 2)
+		yoff += 1
+
+	def _getIndependentAxes(self):
+		axes = razer.getSupportedAxes(self.mouseWidget.mouse)
+		axes = [axis for axis in axes if (axis[2] & Razer.RAZER_AXIS_INDEPENDENT_DPIMAPPING)]
+		if not axes:
+			axes = [ (0, "", 0) ]
+		return axes
+
+	# ------------------------------------------------------------------
+	# Async fetch/apply split for reload
+	# ------------------------------------------------------------------
+
+	def _fetchData(self, mouse, profileId):
+		"""Fetch all profile data from razerd. Safe to call on background thread."""
+		d = {}
+		try:
+			d['minfo'] = razer.getMouseInfo(mouse)
+		except Exception:
+			d['minfo'] = 0
+
+		if self.freqSel is not None:
+			try:
+				d['freq'] = {
+					'supported': razer.getSupportedFreqs(mouse),
+					'current':   razer.getCurrentFreq(mouse, profileId),
+				}
+			except Exception:
+				d['freq'] = None
+
+		try:
+			all_axes = razer.getSupportedAxes(mouse)
+			axes = [a for a in all_axes if a[2] & Razer.RAZER_AXIS_INDEPENDENT_DPIMAPPING]
+			if not axes:
+				axes = [(0, "", 0)]
+		except Exception:
+			axes = [(0, "", 0)]
+		d['axes'] = axes
+
+		try:
+			all_mappings  = razer.getSupportedDpiMappings(mouse)
+			d['supportedMappings'] = [m for m in all_mappings
+			                          if m.profileMask == 0 or
+			                             m.profileMask & (1 << profileId)]
+			d['axisMappings']      = [razer.getDpiMapping(mouse, profileId, a[0]) for a in axes]
+			d['dpimappings']       = all_mappings
+			d['supportedRes']      = razer.getSupportedRes(mouse)
+		except Exception:
+			d['supportedMappings'] = []
+			d['axisMappings']      = []
+			d['dpimappings']       = []
+			d['supportedRes']      = []
+
+		try:
+			d['activeProf'] = razer.getActiveProfile(mouse)
+		except Exception:
+			d['activeProf'] = None
+
+		try:
+			d['leds'] = razer.getLeds(mouse, profileId)
+		except Exception:
+			d['leds'] = []
+
+		return d
+
+	def _applyData(self, d):
+		"""Update all widgets from pre-fetched data. Must run on main thread."""
+		self.mouseWidget.recurseProtect += 1
+
+		# Frequency
+		if self.freqSel and d.get('freq') is not None:
+			freq_d = d['freq']
+			self.freqSel.freqSel.clear()
+			self.freqSel.freqSel.addItem(self.tr("Unknown Hz"), 0)
+			for f in freq_d.get('supported', []):
+				self.freqSel.freqSel.addItem(self.tr("%u Hz" % f), f)
+			idx = self.freqSel.freqSel.findData(freq_d.get('current', 0))
+			if idx >= 0:
+				self.freqSel.freqSel.setCurrentIndex(idx)
+
+		# Resolution selectors
+		axes             = d.get('axes', [(0, "", 0)])
+		supportedMappings = d.get('supportedMappings', [])
+		axisMappings      = d.get('axisMappings', [])
+
+		for resSel in self.resSel:
+			resSel.clear()
+		for i, resSel in enumerate(self.resSel):
+			resSel.addItem(self.tr("Unknown mapping"), 0xFFFFFFFF)
+			for mapping in supportedMappings:
+				r    = [x for x in mapping.res if x is not None]
+				rStr = "/".join(("%u" % x) if x else self.tr("Unknown") for x in r)
+				resSel.addItem(
+					self.tr("Scan resolution %u   (%s DPI)" % (mapping.id + 1, rStr)),
+					mapping.id)
+			if i < len(axisMappings):
+				idx = resSel.findData(axisMappings[i])
+				if idx >= 0:
+					resSel.setCurrentIndex(idx)
+
+		independent = (len(axisMappings) > 1 and
+		               any(x != axisMappings[0] for x in axisMappings))
+		self.resIndependent.setCheckState(
+			Qt.CheckState.Checked if independent else Qt.CheckState.Unchecked)
+
+		# Profile active radio
+		activeProf = d.get('activeProf')
+		if activeProf is not None:
+			self.profileActive.setChecked(activeProf == self.profileId)
+
+		# DPI mappings widget — pass pre-fetched supportedRes to avoid sync calls
+		self.dpimappings.clear()
+		self.dpimappings._ensureApplyRow()
+		supportedRes = d.get('supportedRes')
+		for mapping in d.get('dpimappings', []):
+			if (mapping.profileMask == 0) or (mapping.profileMask & (1 << self.profileId)):
+				self.dpimappings.add(mapping, supportedRes)
+
+		# LEDs
+		self.leds.clear()
+		for led in d.get('leds', []):
+			self.leds.add(led)
+
+		self.mouseWidget.recurseProtect -= 1
+
+	def reload(self):
+		"""Trigger async reload of this profile widget's data."""
+		mouse     = self.mouseWidget.mouse
+		profileId = self.profileId
+
+		def fetch():
+			return self._fetchData(mouse, profileId)
+
+		def apply(data):
+			if isinstance(data, Exception):
+				return
+			self._applyData(data)
+
+		_run_async(fetch, apply)
+
+	# ------------------------------------------------------------------
+	# Signal handlers
+	# ------------------------------------------------------------------
+
+	def _activeChanged(self, checked):
+		if self.mouseWidget.recurseProtect:
+			return
+		if not checked:
+			self.mouseWidget.recurseProtect += 1
+			self.profileActive.setChecked(True)
+			self.mouseWidget.recurseProtect -= 1
+			return
+
+		mouse     = self.mouseWidget.mouse
+		profileId = self.profileId
+		self.profileActive.setEnabled(False)
+
+		def work():
+			return razer.setActiveProfile(mouse, profileId)
+
+		def on_done(result):
+			self.profileActive.setEnabled(True)
+			if not isinstance(result, Exception) and result == 0:
+				self.mouseWidget.reloadProfiles()
+
+		_run_async(work, on_done)
+
+	def _resChanged(self, unused=None):
+		if self.mouseWidget.recurseProtect:
+			return
+		mouse     = self.mouseWidget.mouse
+		profileId = self.profileId
+
+		if self.resIndependent.checkState() == Qt.CheckState.Checked:
+			for axisId, resSel in enumerate(self.resSel):
+				idx = resSel.currentIndex()
+				res = resSel.itemData(idx)
+				_run_async(
+					lambda r=res, a=axisId: razer.setDpiMapping(mouse, profileId, r, a),
+					lambda result: None)
+		else:
+			idx = self.resSel[0].currentIndex()
+			res = self.resSel[0].itemData(idx)
+			_run_async(
+				lambda r=res: razer.setDpiMapping(mouse, profileId, r),
+				lambda result: None)
+			self.mouseWidget.recurseProtect += 1
+			for resSel in self.resSel[1:]:
+				resSel.setCurrentIndex(idx)
+			self.mouseWidget.recurseProtect -= 1
+
+	def _resIndependentChanged(self, _=None):
+		if self.resIndependent.checkState() == Qt.CheckState.Checked:
+			for resSel in self.resSel[1:]:
+				resSel.setEnabled(True)
+		else:
+			for resSel in self.resSel[1:]:
+				resSel.setEnabled(False)
+		self._resChanged()
+
+	def _showButtonConf(self, checked):
+		bconf = ButtonConfDialog(self)
+		bconf.exec()
+
+	def _nameChange(self, unused):
+		mouse     = self.mouseWidget.mouse
+		profileId = self.profileId
+		# Fetch current name (blocking, but only on explicit user click — acceptable)
+		try:
+			name = razer.getProfileName(mouse, profileId)
+		except Exception:
+			name = ""
+		(newName, ok) = QInputDialog.getText(self, self.tr("New profile name"),
+						     self.tr("New profile name:"),
+						     QLineEdit.EchoMode.Normal,
+						     name)
+		if not ok or newName == name:
+			return
+
+		self.buttonName.setEnabled(False)
+
+		def work():
+			return razer.setProfileName(mouse, profileId, newName)
+
+		def on_done(result):
+			self.buttonName.setEnabled(True)
+			if not isinstance(result, Exception):
+				self.mouseWidget.reloadProfiles()
+
+		_run_async(work, on_done)
+
+# ---------------------------------------------------------------------------
+# Mouse widget (device-level)
+# ---------------------------------------------------------------------------
 
 class MouseWidget(QWidget):
 	def __init__(self, parent=None):
@@ -537,6 +875,7 @@ class MouseWidget(QWidget):
 		self.layout().addWidget(self.freqSel)
 
 		self.dpimappings = MouseDpiMappingsWidget(self, self)
+		self.dpimappings._ensureApplyRow()
 		self.layout().addWidget(self.dpimappings)
 
 		self.leds = LedsWidget(self, self)
@@ -559,6 +898,7 @@ class MouseWidget(QWidget):
 		self.profiletab.clear()
 		self.profileWidgets = []
 		self.dpimappings.clear()
+		self.dpimappings._ensureApplyRow()
 		self.leds.clear()
 		self.profiletab.setEnabled(index > -1)
 		if index == -1:
@@ -607,15 +947,51 @@ class MouseWidget(QWidget):
 			self.fwVer.show()
 
 	def reloadProfiles(self):
-		for prof in self.profileWidgets:
-			prof.reload()
-		activeProf = razer.getActiveProfile(self.mouse)
-		for i in range(0, self.profiletab.count()):
-			profileId = self.profiletab.widget(i).profileId
-			name = razer.getProfileName(self.mouse, profileId)
-			if activeProf == profileId:
-				name = ">" + name + "<"
-			self.profiletab.setTabText(i, name)
+		"""Async reload: fetch all profile data on a background thread, update UI on main thread."""
+		mouse       = self.mouse
+		prof_list   = [(w, w.profileId) for w in self.profileWidgets]
+		tab_list    = [(i, self.profiletab.widget(i).profileId)
+		               for i in range(self.profiletab.count())]
+
+		def fetch():
+			result = {'active': None, 'names': {}, 'per_profile': {}}
+			try:
+				result['active'] = razer.getActiveProfile(mouse)
+			except Exception:
+				pass
+			for _i, pid in tab_list:
+				try:
+					result['names'][pid] = razer.getProfileName(mouse, pid)
+				except Exception:
+					result['names'][pid] = str(pid + 1)
+			for widget, pid in prof_list:
+				try:
+					result['per_profile'][pid] = widget._fetchData(mouse, pid)
+				except Exception:
+					result['per_profile'][pid] = None
+			return result
+
+		def apply(result):
+			if isinstance(result, Exception):
+				return
+			self.recurseProtect += 1
+			active = result.get('active')
+			for i, pid in tab_list:
+				name = result['names'].get(pid, str(pid + 1))
+				if active == pid:
+					name = ">" + name + "<"
+				self.profiletab.setTabText(i, name)
+			for widget, pid in prof_list:
+				data = result['per_profile'].get(pid)
+				if data is not None:
+					widget._applyData(data)
+			self.recurseProtect -= 1
+
+		_run_async(fetch, apply)
+
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
 
 class StatusBar(QStatusBar):
 	def showMessage(self, msg):
@@ -660,7 +1036,6 @@ class MainWindow(QMainWindow):
 		if n:
 			self.scan()
 
-	# Rescan for new devices
 	def scan(self):
 		razer.rescanMice()
 		mice = razer.getMice()
@@ -778,10 +1153,8 @@ class RazerApplet(QSystemTrayIcon):
 				self.buildMenu()
 
 	def buildMenu(self):
-		# clear the menu
 		self.menu.clear()
 
-		# add mices and profiles to menu
 		for mouse in self.mice:
 			mouse_id = RazerDevId(mouse)
 			mouse_menu = self.menu.addMenu("&" + mouse_id.getDevName() + " mouse")
@@ -791,7 +1164,6 @@ class RazerApplet(QSystemTrayIcon):
 			act = self.menu.addAction("No Razer devices found")
 			act.setEnabled(False)
 
-		# add buttons
 		self.menu.addSeparator()
 		self.menu.addAction("&Open main window...", self.mainwnd.show)
 		self.menu.addAction("&Exit", sys.exit)
