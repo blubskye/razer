@@ -25,7 +25,7 @@ set(QT_HEADERS
 add_executable(qrazercfg_qt ${QT_SOURCES} ${QT_HEADERS})
 
 target_compile_options(qrazercfg_qt PRIVATE
-    -std=c++17 -Wall -Wextra -g -rdynamic)
+    -std=c++17 -Wall -Wextra $<$<CONFIG:Debug>:-g> -rdynamic)
 
 target_include_directories(qrazercfg_qt PRIVATE
     "${razer_SOURCE_DIR}/librazerd"

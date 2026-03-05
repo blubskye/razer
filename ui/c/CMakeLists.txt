@@ -3,7 +3,7 @@ include("${razer_SOURCE_DIR}/scripts/cmake.global")
 add_executable(razercfg_c razercfg.c)
 
 target_compile_options(razercfg_c PRIVATE
-    -std=c2x -Wall -Wextra -Wpedantic -g -rdynamic)
+    -std=c2x -Wall -Wextra -Wpedantic $<$<CONFIG:Debug>:-g> -rdynamic)
 
 target_include_directories(razercfg_c PRIVATE
     "${razer_SOURCE_DIR}/librazerd"

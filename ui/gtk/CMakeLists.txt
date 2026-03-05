@@ -25,7 +25,7 @@ set(GTK_HEADERS
 add_executable(qrazercfg_gtk ${GTK_SOURCES} ${GTK_HEADERS})
 
 target_compile_options(qrazercfg_gtk PRIVATE
-    -std=c2x -Wall -Wextra -g -rdynamic
+    -std=c2x -Wall -Wextra $<$<CONFIG:Debug>:-g> -rdynamic
     ${GTK4_CFLAGS_OTHER})
 
 target_compile_definitions(qrazercfg_gtk PRIVATE

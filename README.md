@@ -115,6 +115,29 @@ cmake --build build -j$(nproc)
 
 All four backends can be built independently. Omit `-DUI_BACKEND` to build the default (Python). You can also build multiple backends by configuring separate build directories.
 
+### Build types
+
+| Build type | Flags | Use case |
+|---|---|---|
+| `Debug` | `-Og -g` + ASan/UBSan sanitizers | Development, debugging |
+| `Release` | `-O3 -DNDEBUG` | Standard production build |
+| `O3` | `-O3 -DNDEBUG` | Explicit `-O3` with no LTO |
+| `O3LTO` | `-O3 -DNDEBUG -flto=auto` | Maximum performance with Link-Time Optimisation |
+
+```sh
+# Standard optimised build
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DUI_BACKEND=qt
+
+# Explicit O3 (no LTO)
+cmake -B build-o3 -DCMAKE_BUILD_TYPE=O3 -DUI_BACKEND=qt
+
+# O3 + Link-Time Optimisation (fastest binary)
+cmake -B build-lto -DCMAKE_BUILD_TYPE=O3LTO -DUI_BACKEND=qt
+cmake --build build-lto -j$(nproc)
+```
+
+LTO support is detected automatically at configure time. If the toolchain does not support it, a warning is emitted and the `O3LTO` build type falls back to plain `-O3`.
+
 ### Build all backends
 
 ```sh
