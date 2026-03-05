@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(razer C)
+project(razer C CXX)
 
 if (COMMAND cmake_policy)
 	# Libraries linked via full path no longer produce linker search paths.

@@ -671,7 +671,7 @@ int razerd_get_dpi_mappings(razerd_t *r, const char *idstr,
         if ((err = recv_u32(r, &pmlo)) != 0) goto fail;
         m[i].profile_mask = ((uint64_t)pmhi << 32) | pmlo;
         if ((err = recv_u32(r, &mut)) != 0) goto fail;
-        m[i].mutable = mut != 0;
+        m[i].is_mutable = mut != 0;
         continue;
 fail:
         /* razerd_dpi_mapping_t contains no heap pointers — flat free */

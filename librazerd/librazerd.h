@@ -103,7 +103,7 @@ typedef struct {
     uint32_t res[3];       /* per-dimension resolution in DPI, 0 if unused */
     uint32_t dim_mask;     /* bitmask: which res[] slots are valid */
     uint64_t profile_mask; /* which profiles use this mapping */
-    bool     mutable;
+    bool     is_mutable;   /* renamed from 'mutable' for C++ compatibility */
 } razerd_dpi_mapping_t;
 
 [[nodiscard]] int razerd_get_dpi_mappings(razerd_t *r,
