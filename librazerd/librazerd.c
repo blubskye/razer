@@ -245,7 +245,7 @@ int razerd_errno(razerd_t *r)
 
 /* Build and send a 512-byte command packet while holding r->lock.
  * Caller must hold r->lock before calling. */
-static __attribute__((unused)) int send_cmd(razerd_t *r, uint8_t cmd_id,
+static int send_cmd(razerd_t *r, uint8_t cmd_id,
                     const char *idstr,
                     const void *payload, size_t payload_len)
 {
@@ -296,7 +296,7 @@ static __attribute__((unused)) int send_priv_cmd(razerd_t *r, uint8_t cmd_id,
 
 /* Receive a REPLY_U32 while holding r->lock.
  * Caller must hold r->lock before calling. */
-static __attribute__((unused)) int recv_u32(razerd_t *r, uint32_t *out)
+static int recv_u32(razerd_t *r, uint32_t *out)
 {
     uint8_t hdr;
     int err = recv_all(r->cmd_fd, &hdr, 1);
@@ -328,7 +328,7 @@ static __attribute__((unused)) int recv_u32_priv(razerd_t *r, uint32_t *out)
 /* Receive a REPLY_STR and return a heap-allocated UTF-8 C string.
  * UTF-16-BE strings are converted to UTF-8 (BMP only).
  * Caller frees with free(). */
-static __attribute__((unused)) int recv_str(razerd_t *r, char **out)
+static int recv_str(razerd_t *r, char **out)
 {
     uint8_t hdr;
     int err = recv_all(r->cmd_fd, &hdr, 1);
@@ -445,27 +445,53 @@ static __attribute__((unused)) int recv_str_priv(razerd_t *r, char **out)
 }
 
 /* ------------------------------------------------------------------ */
-/* Device discovery stubs (implemented in later tasks)                */
+/* Device discovery                                                    */
 /* ------------------------------------------------------------------ */
 
 int razerd_rescan(razerd_t *r)
 {
-    (void)r;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_RESCANMICE, "", NULL, 0);
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_reconfigure(razerd_t *r)
 {
-    (void)r;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_RECONFIGMICE, "", NULL, 0);
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_get_mice(razerd_t *r, char ***mice_out, size_t *count_out)
 {
-    (void)r;
-    *mice_out  = NULL;
-    *count_out = 0;
-    return 0;
+    mtx_lock(&r->lock);
+
+    int err = send_cmd(r, CMD_GETMICE, "", NULL, 0);
+    if (err) goto unlock;
+
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+
+    char **mice = calloc(count, sizeof(char *));
+    if (!mice) { err = -ENOMEM; goto unlock; }
+
+    for (uint32_t i = 0; i < count; i++) {
+        err = recv_str(r, &mice[i]);
+        if (err) {
+            for (uint32_t j = 0; j < i; j++) free(mice[j]);
+            free(mice);
+            goto unlock;
+        }
+    }
+
+    *mice_out  = mice;
+    *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 void razerd_free_mice(char **mice, size_t count)
@@ -478,9 +504,20 @@ void razerd_free_mice(char **mice, size_t count)
 
 int razerd_get_mouse_info(razerd_t *r, const char *idstr, uint32_t *flags_out)
 {
-    (void)r; (void)idstr;
-    *flags_out = 0;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_GETMOUSEINFO, idstr, NULL, 0);
+    if (!err) {
+        uint32_t flags;
+        err = recv_u32(r, &flags);
+        if (!err) {
+            if (!(flags & RAZERD_INFO_OK))
+                err = -ENODEV;
+            else
+                *flags_out = flags;
+        }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 /* ------------------------------------------------------------------ */

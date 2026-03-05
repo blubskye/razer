@@ -20,7 +20,7 @@ static void test_open_close(void)
 {
     TEST("razerd_open/close");
     razerd_t *r = razerd_open();
-    ASSERT(r != NULL, "razerd_open returned NULL");
+    if (!r) { FAIL("razerd_open failed (razerd running?)"); return; }
     razerd_close(r);
     PASS();
 }
@@ -29,13 +29,41 @@ static void test_get_mice(void)
 {
     TEST("razerd_get_mice");
     razerd_t *r = razerd_open();
-    ASSERT(r != NULL, "razerd_open failed");
+    if (!r) { FAIL("razerd_open failed (razerd running?)"); return; }
 
     char **mice = NULL;
     size_t count = 0;
     int err = razerd_get_mice(r, &mice, &count);
-    ASSERT(err == 0, "razerd_get_mice returned error");
+    if (err != 0) { razerd_close(r); FAIL("razerd_get_mice returned error"); return; }
     printf("(%zu mice) ", count);
+    razerd_free_mice(mice, count);
+    razerd_close(r);
+    PASS();
+}
+
+static void test_mouse_info(void)
+{
+    TEST("razerd_get_mouse_info");
+    razerd_t *r = razerd_open();
+    if (!r) { FAIL("razerd_open failed (razerd running?)"); return; }
+
+    char **mice = NULL; size_t count = 0;
+    int err = razerd_get_mice(r, &mice, &count);
+    if (err != 0) { razerd_close(r); FAIL("get_mice failed"); return; }
+
+    if (count == 0) {
+        printf("(no mice, skipping) ");
+        razerd_free_mice(mice, count);
+        razerd_close(r);
+        PASS();
+        return;
+    }
+
+    uint32_t flags = 0;
+    err = razerd_get_mouse_info(r, mice[0], &flags);
+    if (err != 0) { razerd_free_mice(mice, count); razerd_close(r); FAIL("get_mouse_info failed"); return; }
+    printf("(flags=0x%x) ", flags);
+
     razerd_free_mice(mice, count);
     razerd_close(r);
     PASS();
@@ -48,6 +76,7 @@ int main(void)
 
     test_open_close();
     test_get_mice();
+    test_mouse_info();
 
     printf("\n%d/%d tests passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;
