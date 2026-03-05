@@ -40,6 +40,7 @@
 #include "hw_mamba_wireless.h"
 #include "hw_diamondback_chroma.h"
 #include "hw_abyssus.h"
+#include "hw_orochi.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -205,6 +206,12 @@ static const struct razer_mouse_base_ops razer_abyssus_base_ops = {
 	.release = razer_abyssus_release,
 };
 
+static const struct razer_mouse_base_ops razer_orochi_base_ops = {
+	.type    = RAZER_MOUSETYPE_DEATHADDER,
+	.init    = razer_orochi_init,
+	.release = razer_orochi_release,
+};
+
 #define USBVENDOR_ANY	0xFFFF
 #define USBPRODUCT_ANY	0xFFFF
 
@@ -271,6 +278,9 @@ static const struct razer_usb_device razer_usbdev_table[] = {
 	USB_MOUSE(0x1532, 0x0058, &razer_abyssus_base_ops), /* Abyssus V2 */
 	USB_MOUSE(0x1532, 0x0097, &razer_abyssus_base_ops), /* Abyssus Elite DVA Edition */
 	USB_MOUSE(0x1532, 0x009B, &razer_abyssus_base_ops), /* Abyssus Essential */
+	USB_MOUSE(0x1532, 0x0048, &razer_orochi_base_ops), /* Orochi (wired) */
+	USB_MOUSE(0x1532, 0x0032, &razer_orochi_base_ops), /* Orochi (wireless) */
+	USB_MOUSE(0x1532, 0x0113, &razer_orochi_base_ops), /* Orochi V2 */
 	{ 0, }, /* List end */
 };
 #undef USB_MOUSE
