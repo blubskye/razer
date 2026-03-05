@@ -39,6 +39,7 @@
 #include "hw_mamba_tournament_edition.h"
 #include "hw_mamba_wireless.h"
 #include "hw_diamondback_chroma.h"
+#include "hw_abyssus.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -198,6 +199,12 @@ static const struct razer_mouse_base_ops razer_diamondback_chroma_base_ops = {
 	.release		= razer_diamondback_chroma_release,
 };
 
+static const struct razer_mouse_base_ops razer_abyssus_base_ops = {
+	.type    = RAZER_MOUSETYPE_DEATHADDER,
+	.init    = razer_abyssus_init,
+	.release = razer_abyssus_release,
+};
+
 #define USBVENDOR_ANY	0xFFFF
 #define USBPRODUCT_ANY	0xFFFF
 
@@ -260,6 +267,10 @@ static const struct razer_usb_device razer_usbdev_table[] = {
 	USB_MOUSE(0x1532, 0x0046, &razer_mamba_wireless_base_ops), /* Mamba (wireless) */
 	USB_MOUSE(0x1532, 0x0067, &razer_mamba_wireless_base_ops), /* Mamba Tournament Edition */
 	USB_MOUSE(0x1532, 0x004C, &razer_diamondback_chroma_base_ops),
+	USB_MOUSE(0x1532, 0x0062, &razer_abyssus_base_ops), /* Abyssus 2000 */
+	USB_MOUSE(0x1532, 0x0058, &razer_abyssus_base_ops), /* Abyssus V2 */
+	USB_MOUSE(0x1532, 0x0097, &razer_abyssus_base_ops), /* Abyssus Elite DVA Edition */
+	USB_MOUSE(0x1532, 0x009B, &razer_abyssus_base_ops), /* Abyssus Essential */
 	{ 0, }, /* List end */
 };
 #undef USB_MOUSE
