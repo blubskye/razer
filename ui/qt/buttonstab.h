@@ -1,6 +1,7 @@
 #pragma once
 #include <QComboBox>
 #include <QLabel>
+#include <QPushButton>
 #include <QWidget>
 #include <string>
 #include <vector>
@@ -26,5 +27,6 @@ private:
     std::string  m_idstr;
     std::vector<ButtonRow>         m_rows;
     std::vector<razerd_button_func_t> m_funcs;
-    QLabel      *m_status = nullptr;
+    QPushButton *m_applyBtn = nullptr;
+    QLabel      *m_status   = nullptr;
 };

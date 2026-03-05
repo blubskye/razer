@@ -4,6 +4,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QFormLayout>
+#include <QFutureWatcher>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -12,7 +13,7 @@
 #include <QScrollArea>
 #include <QToolButton>
 #include <QVBoxLayout>
-#include <QSignalMapper>
+#include <QtConcurrent/QtConcurrent>
 
 static QString colorStyle(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -97,16 +98,16 @@ LedTab::LedTab(razerd_t *r, const std::string &idstr, QWidget *parent)
     outerVbox->addWidget(scroll);
 
     auto *btnRow = new QHBoxLayout;
-    auto *applyBtn = new QPushButton("Apply", this);
-    applyBtn->setFixedWidth(80);
-    btnRow->addWidget(applyBtn);
+    m_applyBtn = new QPushButton("Apply", this);
+    m_applyBtn->setFixedWidth(80);
+    btnRow->addWidget(m_applyBtn);
     btnRow->addStretch();
     outerVbox->addLayout(btnRow);
 
     m_status = new QLabel(this);
     outerVbox->addWidget(m_status);
 
-    connect(applyBtn, &QPushButton::clicked, this, &LedTab::onApply);
+    connect(m_applyBtn, &QPushButton::clicked, this, &LedTab::onApply);
 }
 
 void LedTab::onColorPick(int row)
@@ -123,14 +124,35 @@ void LedTab::onColorPick(int row)
 
 void LedTab::onApply()
 {
-    int errors = 0;
+    /* Snapshot UI state on the main thread before going async */
+    std::vector<razerd_led_t> leds;
     for (LedRow &lr : m_rows) {
-        lr.led.state = lr.stateBox->isChecked() ? 1u : 0u;
+        razerd_led_t led = lr.led;
+        led.state = lr.stateBox->isChecked() ? 1u : 0u;
         if (lr.modeCombo->currentIndex() >= 0)
-            lr.led.mode = static_cast<uint32_t>(lr.modeCombo->currentData().toInt());
-        int err = razerd_set_led(m_r, m_idstr.c_str(), RAZERD_PROFILE_INVALID, &lr.led);
-        if (err) errors++;
+            led.mode = static_cast<uint32_t>(lr.modeCombo->currentData().toInt());
+        leds.push_back(led);
     }
-    m_status->setText(errors ? QString("%1 LED(s) failed to apply.").arg(errors)
-                              : "LEDs applied.");
+
+    m_applyBtn->setEnabled(false);
+    m_status->setText("Applying…");
+
+    razerd_t   *r     = m_r;
+    std::string idstr = m_idstr;
+
+    auto *watcher = new QFutureWatcher<QString>(this);
+    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher]() {
+        m_status->setText(watcher->result());
+        m_applyBtn->setEnabled(true);
+        watcher->deleteLater();
+    });
+    watcher->setFuture(QtConcurrent::run([=]() -> QString {
+        int errors = 0;
+        for (const razerd_led_t &led : leds) {
+            if (razerd_set_led(r, idstr.c_str(), RAZERD_PROFILE_INVALID, &led))
+                errors++;
+        }
+        return errors ? QString("%1 LED(s) failed to apply.").arg(errors)
+                      : "LEDs applied.";
+    }));
 }

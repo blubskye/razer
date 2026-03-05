@@ -5,12 +5,14 @@
 #include <string.h>
 
 typedef struct {
-    razerd_t   *r;
-    char        idstr[64];
-    uint32_t    active_id;
-    GtkListBox *list;
-    GtkEntry   *name_entry;
-    GtkLabel   *status;
+    razerd_t    *r;
+    char         idstr[64];
+    uint32_t     active_id;
+    GtkListBox  *list;
+    GtkEntry    *name_entry;
+    GtkButton   *set_active_btn;
+    GtkButton   *rename_btn;
+    GtkLabel    *status;
 } ProfileData;
 
 /* Forward declaration */
@@ -74,25 +76,65 @@ static void on_row_selected(GtkListBox *lb, GtkListBoxRow *row, gpointer data)
     }
 }
 
+/* ---------- async helpers ------------------------------------------ */
+
+typedef struct { razerd_t *r; char idstr[64]; uint32_t pid; char name[256];
+                 gboolean do_rename; gchar *result; } ProfileTask;
+
+static void profile_worker(GTask *task, gpointer src, gpointer tdata, GCancellable *c)
+{
+    (void)src; (void)c;
+    ProfileTask *pt = tdata;
+    int err = pt->do_rename
+        ? razerd_set_profile_name(pt->r, pt->idstr, pt->pid, pt->name)
+        : razerd_set_active_profile(pt->r, pt->idstr, pt->pid);
+    const char *ok_msg = pt->do_rename ? "Profile renamed." : "Active profile changed.";
+    pt->result = err ? g_strdup_printf("Error: %d", err) : g_strdup(ok_msg);
+    g_task_return_pointer(task, pt->result, NULL);
+}
+
+static void profile_done(GObject *src, GAsyncResult *res, gpointer data)
+{
+    (void)src;
+    ProfileData *d      = data;
+    gchar       *result = g_task_propagate_pointer(G_TASK(res), NULL);
+    gtk_label_set_text(d->status, result ? result : "");
+    gtk_widget_set_sensitive(GTK_WIDGET(d->set_active_btn), TRUE);
+    gtk_widget_set_sensitive(GTK_WIDGET(d->rename_btn), TRUE);
+    if (result && (g_str_equal(result, "Active profile changed.") ||
+                   g_str_equal(result, "Profile renamed.")))
+        populate_list(d);
+    g_free(result);
+}
+
+static void run_profile_task(ProfileData *d, uint32_t pid,
+                              gboolean do_rename, const char *name)
+{
+    ProfileTask *pt = g_new0(ProfileTask, 1);
+    pt->r          = d->r;
+    g_strlcpy(pt->idstr, d->idstr, sizeof(pt->idstr));
+    pt->pid        = pid;
+    pt->do_rename  = do_rename;
+    if (name) g_strlcpy(pt->name, name, sizeof(pt->name));
+
+    gtk_widget_set_sensitive(GTK_WIDGET(d->set_active_btn), FALSE);
+    gtk_widget_set_sensitive(GTK_WIDGET(d->rename_btn), FALSE);
+    gtk_label_set_text(d->status, "Applying…");
+
+    GTask *task = g_task_new(NULL, NULL, profile_done, d);
+    g_task_set_task_data(task, pt, g_free);
+    g_task_run_in_thread(task, profile_worker);
+    g_object_unref(task);
+}
+
 static void on_set_active(GtkButton *btn, gpointer data)
 {
     (void)btn;
     ProfileData   *d   = data;
     GtkListBoxRow *row = gtk_list_box_get_selected_row(d->list);
-    if (!row) {
-        gtk_label_set_text(d->status, "No profile selected.");
-        return;
-    }
+    if (!row) { gtk_label_set_text(d->status, "No profile selected."); return; }
     uint32_t pid = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "profile-id"));
-    int err = razerd_set_active_profile(d->r, d->idstr, pid);
-    char buf[64];
-    if (err) {
-        snprintf(buf, sizeof(buf), "Error setting active profile: %d", err);
-        gtk_label_set_text(d->status, buf);
-    } else {
-        gtk_label_set_text(d->status, "Active profile changed.");
-        populate_list(d);
-    }
+    run_profile_task(d, pid, FALSE, NULL);
 }
 
 static void on_rename(GtkButton *btn, gpointer data)
@@ -100,21 +142,10 @@ static void on_rename(GtkButton *btn, gpointer data)
     (void)btn;
     ProfileData   *d   = data;
     GtkListBoxRow *row = gtk_list_box_get_selected_row(d->list);
-    if (!row) {
-        gtk_label_set_text(d->status, "No profile selected.");
-        return;
-    }
+    if (!row) { gtk_label_set_text(d->status, "No profile selected."); return; }
     uint32_t    pid  = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "profile-id"));
     const char *name = gtk_editable_get_text(GTK_EDITABLE(d->name_entry));
-    int err = razerd_set_profile_name(d->r, d->idstr, pid, name);
-    char buf[64];
-    if (err) {
-        snprintf(buf, sizeof(buf), "Error renaming profile: %d", err);
-        gtk_label_set_text(d->status, buf);
-    } else {
-        gtk_label_set_text(d->status, "Profile renamed.");
-        populate_list(d);
-    }
+    run_profile_task(d, pid, TRUE, name);
 }
 
 GtkWidget *profile_panel_new(razerd_t *r, const char *idstr)
@@ -155,12 +186,14 @@ GtkWidget *profile_panel_new(razerd_t *r, const char *idstr)
     gtk_box_append(GTK_BOX(rbox), entry);
 
     GtkWidget *ren_btn = gtk_button_new_with_label("Rename");
+    d->rename_btn = GTK_BUTTON(ren_btn);
     gtk_box_append(GTK_BOX(rbox), ren_btn);
     gtk_frame_set_child(GTK_FRAME(frame), rbox);
     gtk_box_append(GTK_BOX(outer), frame);
 
     /* Set active button */
     GtkWidget *act_btn = gtk_button_new_with_label("Set Active");
+    d->set_active_btn = GTK_BUTTON(act_btn);
     gtk_widget_set_halign(act_btn, GTK_ALIGN_START);
     gtk_box_append(GTK_BOX(outer), act_btn);
 

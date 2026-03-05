@@ -1,8 +1,9 @@
 #pragma once
-#include <QWidget>
 #include <QLabel>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QString>
+#include <QWidget>
 #include <string>
 #include <vector>
 extern "C" {
@@ -29,5 +30,6 @@ private:
     razerd_t          *m_r;
     std::string        m_idstr;
     std::vector<LedRow> m_rows;
-    QLabel            *m_status = nullptr;
+    QPushButton       *m_applyBtn = nullptr;
+    QLabel            *m_status   = nullptr;
 };

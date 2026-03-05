@@ -1,11 +1,13 @@
 #include "buttonstab.h"
 
+#include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
+#include <QtConcurrent/QtConcurrent>
 
 ButtonsTab::ButtonsTab(razerd_t *r, const std::string &idstr, QWidget *parent)
     : QWidget(parent), m_r(r), m_idstr(idstr)
@@ -73,30 +75,48 @@ ButtonsTab::ButtonsTab(razerd_t *r, const std::string &idstr, QWidget *parent)
     scroll->setWidget(inner);
     outerVbox->addWidget(scroll);
 
-    auto *btnRow   = new QHBoxLayout;
-    auto *applyBtn = new QPushButton("Apply", this);
-    applyBtn->setFixedWidth(80);
-    btnRow->addWidget(applyBtn);
+    auto *btnRow = new QHBoxLayout;
+    m_applyBtn = new QPushButton("Apply", this);
+    m_applyBtn->setFixedWidth(80);
+    btnRow->addWidget(m_applyBtn);
     btnRow->addStretch();
     outerVbox->addLayout(btnRow);
 
     m_status = new QLabel(this);
     outerVbox->addWidget(m_status);
 
-    connect(applyBtn, &QPushButton::clicked, this, &ButtonsTab::onApply);
+    connect(m_applyBtn, &QPushButton::clicked, this, &ButtonsTab::onApply);
 }
 
 void ButtonsTab::onApply()
 {
-    int errors = 0;
-    for (ButtonRow &br : m_rows) {
-        uint32_t func_id = br.funcCombo->currentData().toUInt();
-        int err = razerd_set_button_function(m_r, m_idstr.c_str(),
-                                              RAZERD_PROFILE_INVALID,
-                                              br.button_id, func_id);
-        if (err) errors++;
-    }
-    m_status->setText(errors
-        ? QString("%1 button(s) failed to apply.").arg(errors)
-        : "Buttons applied.");
+    /* Snapshot button_id + func_id pairs from UI */
+    using Pair = std::pair<uint32_t, uint32_t>;
+    std::vector<Pair> assignments;
+    for (ButtonRow &br : m_rows)
+        assignments.emplace_back(br.button_id, br.funcCombo->currentData().toUInt());
+
+    m_applyBtn->setEnabled(false);
+    m_status->setText("Applying…");
+
+    razerd_t   *r     = m_r;
+    std::string idstr = m_idstr;
+
+    auto *watcher = new QFutureWatcher<QString>(this);
+    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher]() {
+        m_status->setText(watcher->result());
+        m_applyBtn->setEnabled(true);
+        watcher->deleteLater();
+    });
+    watcher->setFuture(QtConcurrent::run([=]() -> QString {
+        int errors = 0;
+        for (const auto &[btn_id, func_id] : assignments) {
+            if (razerd_set_button_function(r, idstr.c_str(),
+                                           RAZERD_PROFILE_INVALID,
+                                           btn_id, func_id))
+                errors++;
+        }
+        return errors ? QString("%1 button(s) failed to apply.").arg(errors)
+                      : "Buttons applied.";
+    }));
 }
