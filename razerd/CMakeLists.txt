@@ -8,6 +8,7 @@ set_target_properties(razerd PROPERTIES COMPILE_FLAGS ${GENERIC_COMPILE_FLAGS})
 include_directories("${razer_SOURCE_DIR}/librazer")
 
 target_link_libraries(razerd razer)
+target_link_options(razerd PRIVATE -rdynamic)
 install(TARGETS razerd DESTINATION bin)
 
 if (NOT DEFINED ENV{RPM_BUILD_ROOT} AND NOT DEFINED ENV{RAZERCFG_PKG_BUILD})

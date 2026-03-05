@@ -41,6 +41,37 @@
 #include <byteswap.h>
 #endif
 
+#include <execinfo.h>
+
+static void crash_handler(int sig)
+{
+	void *frames[64];
+	int n = backtrace(frames, 64);
+	backtrace_symbols_fd(frames, n, STDERR_FILENO);
+
+	char path[64];
+	snprintf(path, sizeof(path), "/tmp/razerd-crash-%d.log", (int)getpid());
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd >= 0) {
+		backtrace_symbols_fd(frames, n, fd);
+		close(fd);
+	}
+	signal(sig, SIG_DFL);
+	raise(sig);
+}
+
+static void install_crash_handler(void)
+{
+	struct sigaction sa = {
+		.sa_handler = crash_handler,
+		.sa_flags   = SA_RESETHAND,
+	};
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGSEGV, &sa, NULL);
+	sigaction(SIGABRT, &sa, NULL);
+	sigaction(SIGBUS,  &sa, NULL);
+}
+
 
 #undef min
 #undef max
@@ -411,7 +442,7 @@ static void remove_pidfile(void)
 	}
 }
 
-static int create_pidfile(void)
+[[nodiscard]] static int create_pidfile(void)
 {
 	char buf[32] = { 0, };
 	pid_t pid = getpid();
@@ -456,7 +487,7 @@ static void cleanup_var_run(void)
 	rmdir(RUNDIR_RAZERD);
 }
 
-static int create_socket(const char *path, unsigned int perm,
+[[nodiscard]] static int create_socket(const char *path, unsigned int perm,
 			 unsigned int nrlisten)
 {
 	struct sockaddr_un sockaddr;
@@ -505,7 +536,7 @@ error:
 	return -1;
 }
 
-static int setup_var_run(void)
+[[nodiscard]] static int setup_var_run(void)
 {
 	int err;
 
@@ -517,7 +548,9 @@ static int setup_var_run(void)
 		return err;
 	}
 
-	create_pidfile();
+	err = create_pidfile();
+	if (err)
+		return err;
 
 	/* Create the control socket. */
 	if (cmdargs.force)
@@ -547,7 +580,7 @@ err_remove_pidfile:
 	return -1;
 }
 
-static int setup_environment(void)
+[[nodiscard]] static int setup_environment(void)
 {
 	int err;
 
@@ -795,7 +828,7 @@ static int send_utf16_string(struct client *client, const razer_utf16_t *str)
 	return err;
 }
 
-static int recv_bulk(struct client *client, char *buf, unsigned int len)
+[[nodiscard]] static int recv_bulk(struct client *client, char *buf, unsigned int len)
 {
 	unsigned int next_len, i, got;
 	int nr;
@@ -2259,6 +2292,8 @@ static int parse_args(int argc, char **argv)
 int main(int argc, char **argv)
 {
 	int err;
+
+	install_crash_handler();
 
 	err = parse_args(argc, argv);
 	if (err > 0)
