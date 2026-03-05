@@ -482,7 +482,7 @@ int razer_mamba_wireless_init(struct razer_mouse *m,
 				    d->device_name, false,
 				    NULL, m->idstr);
 
-	m->type			= RAZER_MOUSETYPE_DEATHADDER;
+	m->type			= RAZER_MOUSETYPE_MAMBA_TE;
 	m->get_fw_version	= mamba_wl_get_fw_version;
 	m->global_get_leds	= mamba_wl_get_leds;
 	m->get_profiles		= mamba_wl_get_profiles;
