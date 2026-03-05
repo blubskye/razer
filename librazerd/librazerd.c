@@ -451,6 +451,7 @@ static __attribute__((unused)) int recv_str_priv(razerd_t *r, char **out)
 int razerd_rescan(razerd_t *r)
 {
     mtx_lock(&r->lock);
+    /* razerd sends no reply for RESCANMICE */
     int err = send_cmd(r, CMD_RESCANMICE, "", NULL, 0);
     mtx_unlock(&r->lock);
     return err;
@@ -459,6 +460,7 @@ int razerd_rescan(razerd_t *r)
 int razerd_reconfigure(razerd_t *r)
 {
     mtx_lock(&r->lock);
+    /* razerd sends no reply for RECONFIGMICE */
     int err = send_cmd(r, CMD_RECONFIGMICE, "", NULL, 0);
     mtx_unlock(&r->lock);
     return err;
@@ -474,6 +476,12 @@ int razerd_get_mice(razerd_t *r, char ***mice_out, size_t *count_out)
     uint32_t count;
     err = recv_u32(r, &count);
     if (err) goto unlock;
+
+    if (count == 0) {
+        *mice_out  = NULL;
+        *count_out = 0;
+        goto unlock;
+    }
 
     char **mice = calloc(count, sizeof(char *));
     if (!mice) { err = -ENOMEM; goto unlock; }
@@ -564,6 +572,8 @@ int razerd_get_leds(razerd_t *r, const char *idstr, uint32_t profile_id,
         leds[i].b = (uint8_t)((color_u32       ) & 0xFFu);
         continue;
 fail_led:
+        /* razerd_led_t stores name in a fixed char[64] — no per-entry
+         * heap pointer to free. Just release the flat array. */
         free(leds);
         goto unlock;
     }
@@ -596,6 +606,14 @@ int razerd_set_led(razerd_t *r, const char *idstr, uint32_t profile_id,
 
     mtx_lock(&r->lock);
     int err = send_cmd(r, CMD_SETLED, idstr, payload, sizeof(payload));
+    if (!err) {
+        uint32_t result;
+        err = recv_u32(r, &result);
+        if (!err && result != 0) {
+            r->last_err = (int)result;
+            err = -EIO;
+        }
+    }
     mtx_unlock(&r->lock);
     return err;
 }

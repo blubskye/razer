@@ -77,7 +77,8 @@ static void test_get_leds(void)
 
     char **mice = NULL; size_t mc = 0;
     int err = razerd_get_mice(r, &mice, &mc);
-    if (err != 0 || mc == 0) {
+    if (err != 0) { razerd_close(r); FAIL("get_mice failed"); return; }
+    if (mc == 0) {
         printf("(no mice, skipping) ");
         razerd_free_mice(mice, mc);
         razerd_close(r);
