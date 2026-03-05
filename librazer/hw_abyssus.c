@@ -60,7 +60,7 @@ struct abyssus_drv_data
 	enum razer_mouse_freq		current_freq;
 	struct abyssus_led		logo_led;
 	struct razer_mouse_dpimapping	dpimappings[ABYSSUS_DPIMAPPINGS_NUM];
-	struct razer_axis		axes[2];
+	struct razer_axis		axes[3];
 	uint16_t			fw_version;
 	const char			*device_name;
 };

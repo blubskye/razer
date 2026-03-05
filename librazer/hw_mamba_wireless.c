@@ -61,7 +61,7 @@ struct mamba_wl_drv_data
 	struct mamba_wl_led		scroll_led;
 	struct mamba_wl_led		logo_led;
 	struct razer_mouse_dpimapping	dpimappings[MAMBA_WL_DPIMAPPINGS_NUM];
-	struct razer_axis		axes[2];
+	struct razer_axis		axes[3];
 	uint16_t			fw_version;
 	const char			*device_name;
 };

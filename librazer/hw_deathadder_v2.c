@@ -62,7 +62,7 @@ struct dav2_drv_data
 	struct dav2_led			scroll_led;
 	struct dav2_led			logo_led;
 	struct razer_mouse_dpimapping	dpimappings[DAV2_DPIMAPPINGS_NUM];
-	struct razer_axis		axes[2];
+	struct razer_axis		axes[3];
 	uint16_t			fw_version;
 	const char			*device_name;
 };

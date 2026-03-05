@@ -60,7 +60,7 @@ struct viper_drv_data
 	struct viper_led		scroll_led;
 	struct viper_led		logo_led;
 	struct razer_mouse_dpimapping	dpimappings[VIPER_DPIMAPPINGS_NUM];
-	struct razer_axis		axes[2];
+	struct razer_axis		axes[3];
 	uint16_t			fw_version;
 	const char			*device_name;
 };
