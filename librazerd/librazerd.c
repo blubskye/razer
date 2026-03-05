@@ -240,6 +240,152 @@ int razerd_errno(razerd_t *r)
 }
 
 /* ------------------------------------------------------------------ */
+/* Protocol helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+/* Build and send a 512-byte command packet while holding r->lock.
+ * Caller must hold r->lock before calling. */
+static __attribute__((unused)) int send_cmd(razerd_t *r, uint8_t cmd_id,
+                    const char *idstr,
+                    const void *payload, size_t payload_len)
+{
+    uint8_t buf[RAZERD_CMD_SIZE] = {0};
+    buf[0] = cmd_id;
+
+    if (idstr && idstr[0]) {
+        size_t idlen = strnlen(idstr, RAZERD_IDSTR_MAX - 1);
+        memcpy(buf + 1, idstr, idlen);
+        /* null terminator already zeroed by initialisation */
+    }
+
+    if (payload && payload_len > 0) {
+        /* payload starts after the 1-byte id and 128-byte idstr */
+        size_t maxpay = RAZERD_CMD_SIZE - 1u - RAZERD_IDSTR_MAX;
+        if (payload_len > maxpay)
+            return -EMSGSIZE;
+        memcpy(buf + 1 + RAZERD_IDSTR_MAX, payload, payload_len);
+    }
+
+    if (send(r->cmd_fd, buf, sizeof(buf), 0) != (ssize_t)sizeof(buf))
+        return -errno;
+    return 0;
+}
+
+/* Same but sends on priv_fd. Returns -EPERM if priv_fd unavailable. */
+static __attribute__((unused)) int send_priv_cmd(razerd_t *r, uint8_t cmd_id,
+                         const char *idstr,
+                         const void *payload, size_t payload_len)
+{
+    if (r->priv_fd < 0) return -EPERM;
+
+    uint8_t buf[RAZERD_CMD_SIZE] = {0};
+    buf[0] = cmd_id;
+    if (idstr && idstr[0]) {
+        size_t idlen = strnlen(idstr, RAZERD_IDSTR_MAX - 1);
+        memcpy(buf + 1, idstr, idlen);
+    }
+    if (payload && payload_len > 0) {
+        size_t maxpay = RAZERD_CMD_SIZE - 1u - RAZERD_IDSTR_MAX;
+        if (payload_len > maxpay) return -EMSGSIZE;
+        memcpy(buf + 1 + RAZERD_IDSTR_MAX, payload, payload_len);
+    }
+    if (send(r->priv_fd, buf, sizeof(buf), 0) != (ssize_t)sizeof(buf))
+        return -errno;
+    return 0;
+}
+
+/* Receive a REPLY_U32 while holding r->lock.
+ * Caller must hold r->lock before calling. */
+static __attribute__((unused)) int recv_u32(razerd_t *r, uint32_t *out)
+{
+    uint8_t hdr;
+    int err = recv_all(r->cmd_fd, &hdr, 1);
+    if (err) return err;
+    if (hdr != REPLY_U32) return -EPROTO;
+
+    uint32_t val_be;
+    err = recv_all(r->cmd_fd, &val_be, 4);
+    if (err) return err;
+    *out = be32toh(val_be);
+    return 0;
+}
+
+/* Same but reads from priv_fd. */
+static __attribute__((unused)) int recv_u32_priv(razerd_t *r, uint32_t *out)
+{
+    uint8_t hdr;
+    int err = recv_all(r->priv_fd, &hdr, 1);
+    if (err) return err;
+    if (hdr != REPLY_U32) return -EPROTO;
+    uint32_t val_be;
+    err = recv_all(r->priv_fd, &val_be, 4);
+    if (err) return err;
+    *out = be32toh(val_be);
+    return 0;
+}
+
+/* Receive a REPLY_STR and return a heap-allocated UTF-8 C string.
+ * UTF-16-BE strings are converted to UTF-8 (BMP only).
+ * Caller frees with free(). */
+static __attribute__((unused)) int recv_str(razerd_t *r, char **out)
+{
+    uint8_t hdr;
+    int err = recv_all(r->cmd_fd, &hdr, 1);
+    if (err) return err;
+    if (hdr != REPLY_STR) return -EPROTO;
+
+    uint8_t enc;
+    err = recv_all(r->cmd_fd, &enc, 1);
+    if (err) return err;
+
+    uint16_t slen_be;
+    err = recv_all(r->cmd_fd, (uint8_t *)&slen_be, 2);
+    if (err) return err;
+    uint16_t slen = be16toh(slen_be);
+
+    if (enc == STR_ENC_UTF16BE) {
+        size_t nbytes = (size_t)slen * 2u;
+        uint8_t *raw = malloc(nbytes);
+        if (!raw) return -ENOMEM;
+        err = recv_all(r->cmd_fd, raw, nbytes);
+        if (err) { free(raw); return err; }
+
+        /* Convert BMP UTF-16-BE -> UTF-8.
+         * Each UTF-16 code unit -> up to 3 UTF-8 bytes. */
+        char *utf8 = malloc(slen * 3u + 1u);
+        if (!utf8) { free(raw); return -ENOMEM; }
+        size_t wi = 0;
+        for (uint16_t i = 0; i < slen; i++) {
+            uint16_t cp = ((uint16_t)raw[i * 2] << 8) | raw[i * 2 + 1];
+            if (cp == 0) break;
+            if (cp < 0x80u) {
+                utf8[wi++] = (char)cp;
+            } else if (cp < 0x800u) {
+                utf8[wi++] = (char)(0xC0u | (cp >> 6));
+                utf8[wi++] = (char)(0x80u | (cp & 0x3Fu));
+            } else {
+                utf8[wi++] = (char)(0xE0u | (cp >> 12));
+                utf8[wi++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                utf8[wi++] = (char)(0x80u | (cp & 0x3Fu));
+            }
+        }
+        utf8[wi] = '\0';
+        free(raw);
+        *out = utf8;
+        return 0;
+    }
+
+    /* ASCII or UTF-8: read directly */
+    char *buf = malloc((size_t)slen + 1u);
+    if (!buf) return -ENOMEM;
+    err = recv_all(r->cmd_fd, buf, slen);
+    if (err) { free(buf); return err; }
+    buf[slen] = '\0';
+    *out = buf;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Device discovery stubs (implemented in later tasks)                */
 /* ------------------------------------------------------------------ */
 
