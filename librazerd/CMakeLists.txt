@@ -47,3 +47,19 @@ target_link_libraries(test_librazerd PRIVATE razerd_client)
 if(LIBRAZERD_NOTIFICATIONS)
     target_compile_definitions(test_librazerd PRIVATE LIBRAZERD_NOTIFICATIONS)
 endif()
+
+# AFL++ fuzzer harness
+# Build with: cmake -DCMAKE_C_COMPILER=afl-cc -DBUILD_FUZZER=ON ...
+option(BUILD_FUZZER "Build AFL++ fuzzer harness" OFF)
+if(BUILD_FUZZER)
+    # Link against a Release (non-ASAN) build so AFL_HARDEN can be used.
+    # Build librazerd first with: cmake -DCMAKE_C_COMPILER=afl-gcc-fast \
+    #   -DCMAKE_BUILD_TYPE=Release -DLIBRAZERD_NOTIFICATIONS=OFF ...
+    add_executable(fuzz_librazerd fuzz_librazerd.c)
+    target_compile_options(fuzz_librazerd PRIVATE -std=c2x -g)
+    target_link_libraries(fuzz_librazerd PRIVATE razerd_client)
+    if(LIBRAZERD_NOTIFICATIONS)
+        target_compile_definitions(fuzz_librazerd PRIVATE LIBRAZERD_NOTIFICATIONS)
+    endif()
+    message(STATUS "Building AFL++ fuzzer harness: fuzz_librazerd")
+endif()
