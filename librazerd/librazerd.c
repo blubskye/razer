@@ -886,7 +886,8 @@ int razerd_set_profile_name(razerd_t *r, const char *idstr,
         if ((*src & 0x80u) == 0) {
             cp = *src++;
         } else if ((*src & 0xE0u) == 0xC0u) {
-            cp = ((uint32_t)(*src++ & 0x1Fu) << 6) | (*src++ & 0x3Fu);
+            cp  = (uint32_t)(*src++ & 0x1Fu) << 6;
+            cp |= (*src++ & 0x3Fu);
         } else if ((*src & 0xF0u) == 0xE0u) {
             cp  = ((uint32_t)(*src++ & 0x0Fu) << 12);
             cp |= ((uint32_t)(*src++ & 0x3Fu) <<  6);
@@ -990,10 +991,9 @@ int razerd_get_button_function(razerd_t *r, const char *idstr,
         char *name = NULL;
         err = recv_u32(r, &out->id);
         if (!err) err = recv_str(r, &name);
-        if (!err) {
+        if (!err)
             snprintf(out->name, sizeof(out->name), "%s", name ? name : "");
-            free(name);
-        }
+        free(name);
     }
     mtx_unlock(&r->lock);
     return err;
