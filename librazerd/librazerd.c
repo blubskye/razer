@@ -86,7 +86,7 @@ struct razerd {
     int             notify_fd;    /* dedicated socket for notification thread */
     int             notify_evfd;  /* eventfd: readable when queue non-empty */
     thrd_t          notify_thr;
-    bool            notify_stop;
+    _Atomic bool    notify_stop;
     mtx_t           notify_lock;
     razerd_event_t  nqueue[NOTIFY_QUEUE_SIZE];
     size_t          nq_head;
@@ -114,7 +114,7 @@ static int recv_all(int fd, void *buf, size_t len)
 /* Connect a Unix stream socket to path. Returns fd or -errno. */
 static int connect_unix(const char *path)
 {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0)
         return -errno;
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
@@ -204,8 +204,8 @@ fail_nsock:
 fail_evfd:
     close(r->notify_evfd);
 fail_mtx:
-    mtx_destroy(&r->lock);
 #endif
+    mtx_destroy(&r->lock);
 fail_priv:
     if (r->priv_fd >= 0) close(r->priv_fd);
 fail_cmd:
