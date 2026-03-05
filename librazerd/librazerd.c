@@ -724,49 +724,81 @@ int razerd_change_dpi_mapping(razerd_t *r, const char *idstr,
 }
 
 /* ------------------------------------------------------------------ */
-/* Frequency stubs                                                     */
+/* Frequency operations                                                */
 /* ------------------------------------------------------------------ */
 
 int razerd_get_supported_freqs(razerd_t *r, const char *idstr,
                                 uint32_t **out, size_t *count_out)
 {
-    (void)r; (void)idstr;
-    *out       = NULL;
-    *count_out = 0;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SUPPFREQS, idstr, NULL, 0);
+    if (err) goto unlock;
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+    if (count == 0) {
+        *out = NULL; *count_out = 0;
+        goto unlock;
+    }
+    uint32_t *freqs = malloc(count * sizeof(uint32_t));
+    if (!freqs) { err = -ENOMEM; goto unlock; }
+    for (uint32_t i = 0; i < count; i++) {
+        err = recv_u32(r, &freqs[i]);
+        if (err) { free(freqs); goto unlock; }
+    }
+    *out = freqs; *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
 }
 
-void razerd_free_freqs(uint32_t *out)
-{
-    free(out);
-}
+void razerd_free_freqs(uint32_t *out) { free(out); }
 
 int razerd_get_freq(razerd_t *r, const char *idstr,
                     uint32_t profile_id, uint32_t *freq_out)
 {
-    (void)r; (void)idstr; (void)profile_id;
-    *freq_out = 0;
-    return -ENOSYS;
+    uint32_t payload = htobe32(profile_id);
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_GETFREQ, idstr, &payload, 4);
+    if (!err) err = recv_u32(r, freq_out);
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_set_freq(razerd_t *r, const char *idstr,
                     uint32_t profile_id, uint32_t freq)
 {
-    (void)r; (void)idstr; (void)profile_id; (void)freq;
-    return -ENOSYS;
+    uint32_t payload[2] = { htobe32(profile_id), htobe32(freq) };
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SETFREQ, idstr, payload, sizeof(payload));
+    if (!err) {
+        uint32_t result;
+        err = recv_u32(r, &result);
+        if (!err && result != 0) { r->last_err = (int)result; err = -EIO; }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 /* ------------------------------------------------------------------ */
-/* Firmware stubs                                                      */
+/* Firmware version                                                    */
 /* ------------------------------------------------------------------ */
 
 int razerd_get_fw_version(razerd_t *r, const char *idstr,
                            uint8_t *major_out, uint8_t *minor_out)
 {
-    (void)r; (void)idstr;
-    *major_out = 0;
-    *minor_out = 0;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_GETFWVER, idstr, NULL, 0);
+    if (!err) {
+        uint32_t raw;
+        err = recv_u32(r, &raw);
+        if (!err) {
+            *major_out = (uint8_t)((raw >> 8) & 0xFF);
+            *minor_out = (uint8_t)(raw & 0xFF);
+        }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 /* ------------------------------------------------------------------ */
