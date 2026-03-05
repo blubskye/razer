@@ -111,6 +111,19 @@ static int recv_all(int fd, void *buf, size_t len)
     return 0;
 }
 
+/* Send exactly len bytes, retrying on short writes. */
+static int send_all(int fd, const void *buf, size_t len)
+{
+    size_t sent = 0;
+    while (sent < len) {
+        ssize_t n = send(fd, (const char *)buf + sent, len - sent, MSG_NOSIGNAL);
+        if (n < 0)  return -errno;
+        if (n == 0) return -ECONNRESET;
+        sent += (size_t)n;
+    }
+    return 0;
+}
+
 /* Connect a Unix stream socket to path. Returns fd or -errno. */
 static int connect_unix(const char *path)
 {
@@ -1059,6 +1072,8 @@ void razerd_free_axes(razerd_axis_t *a)
 /* Privileged operations                                              */
 /* ------------------------------------------------------------------ */
 
+/* NOTE: not protected by r->lock — priv_fd has no mutex.
+ * Callers must ensure only one thread calls razerd_flash_firmware at a time. */
 int razerd_flash_firmware(razerd_t *r, const char *idstr,
                            const void *image, size_t len)
 {
@@ -1074,8 +1089,8 @@ int razerd_flash_firmware(razerd_t *r, const char *idstr,
     while (sent < len) {
         size_t chunk = len - sent;
         if (chunk > RAZERD_BULK_CHUNK) chunk = RAZERD_BULK_CHUNK;
-        if (send(r->priv_fd, src + sent, chunk, 0) != (ssize_t)chunk)
-            return -errno;
+        err = send_all(r->priv_fd, src + sent, chunk);
+        if (err) return err;
         sent += chunk;
         uint32_t ack;
         err = recv_u32_priv(r, &ack);
@@ -1106,7 +1121,7 @@ static void notify_enqueue(razerd_t *r, razerd_event_type_t type)
 
     /* Signal the eventfd so the caller's poll/select wakes up */
     uint64_t val = 1;
-    (void)write(r->notify_evfd, &val, sizeof(val));
+    if (write(r->notify_evfd, &val, sizeof(val)) < 0) { /* best-effort */ }
 }
 
 static int notify_thread_fn(void *arg)
@@ -1146,7 +1161,7 @@ int razerd_read_event(razerd_t *r, razerd_event_t *ev_out)
 
     /* Drain one count from the eventfd so it reflects queue state */
     uint64_t val;
-    (void)read(r->notify_evfd, &val, sizeof(val));
+    if (read(r->notify_evfd, &val, sizeof(val)) < 0) { /* EFD_NONBLOCK: EAGAIN if already 0 */ }
 
     return 0;
 }
