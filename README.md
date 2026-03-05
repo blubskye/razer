@@ -126,6 +126,80 @@ done
 
 ---
 
+## 🧪 Testing & Fuzzing
+
+### Debug build with sanitizers
+
+The `Debug` build type automatically enables **AddressSanitizer** and **UndefinedBehaviourSanitizer** on `librazerd` and its test binary:
+
+```sh
+cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug -j$(nproc)
+
+# Run the test suite (requires razerd to be running)
+./build-debug/librazerd/test_librazerd
+```
+
+Sanitizers enabled in Debug mode:
+
+| Sanitizer | Flag |
+|---|---|
+| AddressSanitizer (ASan) | `-fsanitize=address` |
+| UndefinedBehaviourSanitizer (UBSan) | `-fsanitize=undefined` |
+| Float divide-by-zero | `-fsanitize=float-divide-by-zero` |
+| Float cast overflow | `-fsanitize=float-cast-overflow` |
+
+### AFL++ fuzzer
+
+`librazerd` ships a persistent-mode AFL++ harness (`librazerd/fuzz_librazerd.c`) that exercises two attack surfaces per iteration:
+
+1. **UTF-8 → UTF-16-BE encoder** (`razerd_set_profile_name`) — pure computation, no I/O
+2. **Reply parsers** (`get_leds`, `get_dpi_mappings`, `get_supported_freqs`, `get_buttons`, `get_axes`) — against a live `razerd` instance
+
+#### Step 1 — build librazerd with AFL++ instrumentation
+
+```sh
+cmake -B build-fuzz \
+    -DCMAKE_C_COMPILER=afl-gcc-fast \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLIBRAZERD_NOTIFICATIONS=OFF \
+    -DBUILD_FUZZER=ON
+cmake --build build-fuzz -j$(nproc)
+```
+
+#### Step 2 — compile the harness
+
+```sh
+AFL_HARDEN=1 afl-gcc-fast -std=c2x -Wall -O2 -g \
+    -I librazerd \
+    librazerd/fuzz_librazerd.c \
+    -L build-fuzz/librazerd -lrazerd \
+    -Wl,-rpath,$(realpath build-fuzz/librazerd) \
+    -o fuzz_librazerd
+```
+
+#### Step 3 — create seed corpus and run
+
+```sh
+mkdir -p fuzz/in
+echo "test" > fuzz/in/seed0
+
+AFL_SKIP_CPUFREQ=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
+    LD_LIBRARY_PATH=build-fuzz/librazerd \
+    afl-fuzz -i fuzz/in -o fuzz/out -m none -t 5000 \
+    -- ./fuzz_librazerd
+```
+
+> **Note:** `razerd` must be running for the reply-parser targets to be exercised. The UTF-8 encoder target works without a live daemon.
+
+#### Non-AFL manual test
+
+```sh
+echo "hello world" | LD_LIBRARY_PATH=build-fuzz/librazerd ./fuzz_librazerd
+```
+
+---
+
 ## 🚀 Installing
 
 ```sh
