@@ -37,6 +37,7 @@
 #include "hw_imperator.h"
 #include "hw_taipan.h"
 #include "hw_mamba_tournament_edition.h"
+#include "hw_mamba_wireless.h"
 #include "hw_diamondback_chroma.h"
 
 #include <stdint.h>
@@ -185,6 +186,12 @@ static const struct razer_mouse_base_ops razer_mamba_te_base_ops = {
 	.release		= razer_mamba_te_release,
 };
 
+static const struct razer_mouse_base_ops razer_mamba_wireless_base_ops = {
+	.type    = RAZER_MOUSETYPE_DEATHADDER,
+	.init    = razer_mamba_wireless_init,
+	.release = razer_mamba_wireless_release,
+};
+
 static const struct razer_mouse_base_ops razer_diamondback_chroma_base_ops = {
 	.type			= RAZER_MOUSETYPE_DIAMONDBACK_CHROMA,
 	.init			= razer_diamondback_chroma_init,
@@ -249,7 +256,9 @@ static const struct razer_usb_device razer_usbdev_table[] = {
 	USB_MOUSE(0x1532, 0x0005, &razer_boomslangce_base_ops),
 	USB_MOUSE(0x1532, 0x0017, &razer_imperator_base_ops),
 	USB_MOUSE(0x1532, 0x0034, &razer_taipan_base_ops),
-	USB_MOUSE(0x1532, 0x0046, &razer_mamba_te_base_ops), /*mamba tournament edition*/
+	USB_MOUSE(0x1532, 0x0045, &razer_mamba_wireless_base_ops), /* Mamba (wired) */
+	USB_MOUSE(0x1532, 0x0046, &razer_mamba_wireless_base_ops), /* Mamba (wireless) */
+	USB_MOUSE(0x1532, 0x0067, &razer_mamba_wireless_base_ops), /* Mamba Tournament Edition */
 	USB_MOUSE(0x1532, 0x004C, &razer_diamondback_chroma_base_ops),
 	{ 0, }, /* List end */
 };

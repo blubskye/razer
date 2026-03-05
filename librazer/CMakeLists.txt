@@ -34,6 +34,7 @@ add_library(razer ${SHARED_OR_STATIC}
 	    hw_imperator.c
 	    hw_taipan.c
 	    hw_mamba_tournament_edition.c
+	    hw_mamba_wireless.c
 	    hw_diamondback_chroma.c)
 
 set_target_properties(razer PROPERTIES COMPILE_FLAGS ${GENERIC_COMPILE_FLAGS}
