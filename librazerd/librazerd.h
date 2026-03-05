@@ -98,6 +98,14 @@ void razerd_free_leds(razerd_led_t *leds);
 /* DPI                                                                 */
 /* ------------------------------------------------------------------ */
 
+/* Returns heap-allocated array of valid DPI step values for this device.
+ * Free with razerd_free_supported_res(). */
+[[nodiscard]] int razerd_get_supported_res(razerd_t *r,
+                                            const char *idstr,
+                                            uint32_t **res_out,
+                                            size_t *count_out);
+void razerd_free_supported_res(uint32_t *res);
+
 typedef struct {
     uint32_t id;
     uint32_t res[3];       /* per-dimension resolution in DPI, 0 if unused */

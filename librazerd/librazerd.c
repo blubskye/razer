@@ -767,6 +767,33 @@ unlock:
 
 void razerd_free_freqs(uint32_t *out) { free(out); }
 
+int razerd_get_supported_res(razerd_t *r, const char *idstr,
+                              uint32_t **res_out, size_t *count_out)
+{
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SUPPRESOL, idstr, NULL, 0);
+    if (err) goto unlock;
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+    if (count == 0) {
+        *res_out = NULL; *count_out = 0;
+        goto unlock;
+    }
+    uint32_t *res = malloc(count * sizeof(uint32_t));
+    if (!res) { err = -ENOMEM; goto unlock; }
+    for (uint32_t i = 0; i < count; i++) {
+        err = recv_u32(r, &res[i]);
+        if (err) { free(res); goto unlock; }
+    }
+    *res_out = res; *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
+}
+
+void razerd_free_supported_res(uint32_t *res) { free(res); }
+
 int razerd_get_freq(razerd_t *r, const char *idstr,
                     uint32_t profile_id, uint32_t *freq_out)
 {

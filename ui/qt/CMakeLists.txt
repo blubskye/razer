@@ -1,6 +1,6 @@
 include("${razer_SOURCE_DIR}/scripts/cmake.global")
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Core)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Core Concurrent)
 qt_standard_project_setup()
 
 set(QT_SOURCES
@@ -36,6 +36,7 @@ target_compile_definitions(qrazercfg_qt PRIVATE LIBRAZERD_NOTIFICATIONS)
 target_link_libraries(qrazercfg_qt PRIVATE
     Qt6::Widgets
     Qt6::Core
+    Qt6::Concurrent
     razerd_client)
 
 set_target_properties(qrazercfg_qt PROPERTIES OUTPUT_NAME "qrazercfg")
