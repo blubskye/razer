@@ -1,227 +1,228 @@
-Razer device configuration tool
-===============================
+# 🖱️ razercfg
 
-[https://bues.ch/h/razercfg](https://bues.ch/h/razercfg)
+A Linux configuration tool for Razer mice — supporting DPI, LEDs, polling rate, profiles, and button mapping across multiple UI frontends.
 
-This is a configuration utility for Razer devices on Linux systems.
+---
 
-Supported devices
------------------
+## ✨ Features
 
-Device support table at [https://bues.ch/h/razercfg#device_support](https://bues.ch/h/razercfg#device_support)
+- 🔧 **Per-device configuration** — DPI (with X/Y axis lock), polling rate, LED colour/mode, button mapping, profiles
+- 🔁 **Hot-plug** — devices added or removed at runtime are detected automatically
+- ⚡ **Fully async UIs** — every hardware operation runs on a background thread; the UI never freezes
+- 🖥️ **Three graphical frontends** — Qt 6, GTK 4, or Python/PyQt6
+- 💻 **One CLI frontend** — scriptable `razercfg` command-line tool
+- 📡 **System daemon** — `razerd` serialises all hardware access; multiple frontends can run simultaneously
 
-Dependencies
-------------
+---
 
-* Python 3.x: [https://www.python.org/](https://www.python.org/)  
-  Debian Linux: `apt-get install python3`
+## 🏗️ Architecture
 
-* libusb 1.0: [http://libusb.org/](http://libusb.org/)   
-Debian Linux: `apt-get install libusb-1.0-0-dev`
-
-* PyQt6 (for the graphical qrazercfg tool only: [https://pypi.org/project/PyQt6/](https://pypi.org/project/PyQt6/)
-Debian Linux: `apt-get install python3-pyqt6`
-
-* cmake 3.10 or later (for building only): [https://cmake.org/](https://cmake.org/)  
-Debian Linux: `apt-get install cmake`
-
-Note that almost all distributions ship prebuilt packages of the
-above dependencies.
-
-If you installed a dependency after you already ran `cmake .` and/or `make`, it
-might happen that the dependency is still not found. Just delete the cmake
-status files or unpack a clean razercfg tarball to workaround this issue.
-
-
-Building
---------
-
-First invoke `cmake` to build the makefiles.
-Then invoke `make` to build the binaries:
-
-```sh
-cmake .
-make
+```
+                   ┌──────────────────────────────────────────┐
+                   │              Hardware drivers             │
+                   │  (hw_deathadder, hw_dav2, hw_basilisk …) │
+                   └────────────────────┬─────────────────────┘
+                                        │
+                                  ┌─────▼──────┐
+                                  │  librazer  │  (low-level USB HID)
+                                  └─────┬──────┘
+                                        │
+                                  ┌─────▼──────┐
+                                  │   razerd   │  (system daemon, Unix socket)
+                                  └──┬──┬──┬───┘
+                                     │  │  │
+               ┌─────────────────────┘  │  └──────────────────────┐
+               │                        │                          │
+        ┌──────▼──────┐         ┌───────▼───────┐        ┌────────▼───────┐
+        │  librazerd  │         │    pyrazer     │        │   librazerd    │
+        │   (C23 API) │         │  (Python API)  │        │   (C23 API)    │
+        └──┬──┬──┬────┘         └───────┬────────┘        └────────┬───────┘
+           │  │  │                      │                           │
+    ┌──────┘  │  └──────────┐           │                           │
+    │         │             │           │                           │
+┌───▼───┐ ┌──▼───┐ ┌───────▼──┐  ┌────▼─────┐              ┌──────▼──────┐
+│  Qt6  │ │ GTK4 │ │ razercfg │  │ qrazercfg│              │ 3rd-party   │
+│  GUI  │ │  GUI │ │  (CLI)   │  │ (Python) │              │    apps     │
+└───────┘ └──────┘ └──────────┘  └──────────┘              └─────────────┘
 ```
 
-(Note the required space and dot after the cmake command)
+---
 
-Installing
-----------
+## 🛠️ Languages & Technologies
 
-First you need to install the tool libraries and binaries. Do this by executing
-the following command as root:
+| Layer | Language / Tech |
+|---|---|
+| Hardware drivers & daemon (`razerd`) | C99 / C23 |
+| Low-level USB library (`librazer`) | C99 |
+| Client library (`librazerd`) | C23 |
+| Qt 6 frontend | C++17 + Qt 6 |
+| GTK 4 frontend | C23 + GTK 4 |
+| Python frontend | Python 3 + PyQt6 |
+| CLI frontend | C23 |
+| Build system | CMake 3.16+ |
+
+---
+
+## 📋 Supported Devices
+
+| Family | Models |
+|---|---|
+| DeathAdder | Classic, Elite, Essential, V2, V2 Mini, V2 Pro, V2 X, Lite |
+| Basilisk | V1–V3 family (8 PIDs) |
+| Viper | V1–Ultimate family (5 PIDs) |
+| Lancehead | Tournament / Wireless family (5 PIDs) |
+| Mamba | Wireless family (3 PIDs) |
+| Naga | V2 family (6 PIDs) |
+| Abyssus | Logo-LED family (4 PIDs) |
+| Orochi | Logo-LED family (3 PIDs) |
+
+---
+
+## 📦 Dependencies
+
+### Runtime
+
+| Dependency | Package (Debian/Ubuntu) | Package (Fedora/RHEL) |
+|---|---|---|
+| libusb 1.0 | `libusb-1.0-0` | `libusb1` |
+| Python 3 | `python3` | `python3` |
+| PyQt6 *(Python UI only)* | `python3-pyqt6` | `python3-pyqt6` |
+| Qt 6 *(Qt UI only)* | `qt6-base-dev` | `qt6-qtbase-devel` |
+| GTK 4 *(GTK UI only)* | `libgtk-4-dev` | `gtk4-devel` |
+
+### Build only
+
+| Dependency | Package (Debian/Ubuntu) | Package (Fedora/RHEL) |
+|---|---|---|
+| CMake 3.16+ | `cmake` | `cmake` |
+| C/C++ compiler | `build-essential` | `gcc gcc-c++` |
+| pkg-config | `pkg-config` | `pkgconf` |
+| Qt 6 dev tools | `qt6-base-dev qt6-tools-dev-tools` | `qt6-qtbase-devel qt6-qttools-devel` |
+
+---
+
+## 🔨 Building
 
 ```sh
-make install
+# Configure (choose which frontends to build)
+cmake -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DUI_BACKEND=qt        # or: gtk  python  c
+
+# Build
+cmake --build build -j$(nproc)
 ```
 
-Be aware that `make install` installs the shared library `librazer.so` to `$PREFIX/lib`.
-The default `$PREFIX` is `/usr/local/`, but the install prefix can also be changed via `-DCMAKE_INSTALL_PREFIX='<somewhere>'`.
-You have to make sure that `librazer.so` in `$PREFIX/lib/` can be found by the dynamic linker `ld.so`.
-Your operating system most likely already has support for libraries in `/usr/local/lib`. So on most systems you don't have to do anything.
-If this is not the case, or you installed razercfg somewhere else, a new library search path can be added via `/etc/ld.so.conf` or `/etc/ld.so.conf.d/`.
-See your operating system manual for further information.
+All four backends can be built independently. Omit `-DUI_BACKEND` to build the default (Python). You can also build multiple backends by configuring separate build directories.
 
-### If you use **systemd**:
-
-The `make install` step installed the razerd.service file. Reboot or run the
-following command as root to start the razerd daemon:
+### Build all backends
 
 ```sh
-systemctl start razerd
+for backend in qt gtk python c; do
+    cmake -B build-$backend -DUI_BACKEND=$backend -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-$backend -j$(nproc)
+done
 ```
 
-### If you do **not** use systemd:
+---
 
-To automatically start the required system daemon `razerd` at bootup time, you
-need to install the init-script. This software package includes a generic
-example script, that should work out-of-the-box on many Linux distributions. To
-install it, invoke the following commands as root:
+## 🚀 Installing
 
 ```sh
-cp ./razerd.initscript /etc/init.d/razerd
-ln -s /etc/init.d/razerd /etc/rc2.d/S99razerd
-ln -s /etc/init.d/razerd /etc/rc5.d/S99razerd
-ln -s /etc/init.d/razerd /etc/rc0.d/K01razerd
-ln -s /etc/init.d/razerd /etc/rc6.d/K01razerd
+# Install daemon, libraries, and selected frontend (run as root)
+cmake --install build
 ```
 
-### If you use **udev**:
-
-The `make install` step installed the udev script to
+The default install prefix is `/usr/local`. To change it:
 
 ```sh
-/etc/udev/rules.d/80-razer.rules
+cmake -B build -DCMAKE_INSTALL_PREFIX=/usr ...
+cmake --install build
 ```
 
-This should work on most distributions.
+After installing, make sure `librazer.so` and `librazerd.so` are findable by the dynamic linker. On most systems `/usr/local/lib` is already in the search path. If not, add it:
 
-If udev notification does not work, try to reboot the system.
+```sh
+echo /usr/local/lib | sudo tee /etc/ld.so.conf.d/razercfg.conf
+sudo ldconfig
+```
 
-RazerD Configuration
---------------------
+---
 
-The user may create a razerd configuration file in `/etc/razer.conf` which can be
-used to specify various razerd options and initial hardware configuration
-settings.
-An example config file is included as `razer.conf` in this package.
-If no configuration file is available, razerd will work with default settings.
+## ⚙️ Starting the daemon
 
-X Window System (X.ORG) Configuration
--------------------------------------
+`razerd` must run as root before any frontend can be used.
 
-If you don't have an xorg.conf, you don't have to do anything and it should work
-out-of-the-box.
+### systemd
 
-X must _not_ be configured to a specific mouse device like `/dev/input/mouse0`. On
-configuration events, razerd may have to temporarily unregister the mouse from
-the system. This will confuse X, if it's configured to a specific device.
-Configure it to the generic `/dev/input/mice` device instead. This will enable X
-to pick up the mouse again after a configuration event from razerd.
+```sh
+sudo systemctl enable --now razerd
+```
 
-Example xorg.conf snippet:
+### SysV init (non-systemd)
+
+```sh
+sudo cp razerd.initscript /etc/init.d/razerd
+sudo ln -s /etc/init.d/razerd /etc/rc2.d/S99razerd
+sudo ln -s /etc/init.d/razerd /etc/rc5.d/S99razerd
+sudo ln -s /etc/init.d/razerd /etc/rc0.d/K01razerd
+sudo ln -s /etc/init.d/razerd /etc/rc6.d/K01razerd
+sudo /etc/init.d/razerd start
+```
+
+---
+
+## 🖥️ Using the frontends
+
+Once `razerd` is running, start whichever frontend you prefer:
+
+```sh
+# Graphical — Qt 6
+qrazercfg            # built from ui/qt/
+
+# Graphical — GTK 4
+qrazercfg            # built from ui/gtk/
+
+# Graphical — Python/PyQt6
+qrazercfg            # built from ui/python/
+
+# Command-line
+razercfg --help
+```
+
+All graphical UIs are fully non-blocking — Apply buttons queue hardware operations on background threads so the interface stays responsive during USB command delays.
+
+---
+
+## 🔧 Daemon configuration
+
+An optional config file at `/etc/razer.conf` controls daemon options and initial hardware settings. A documented example is included as `razer.conf` in this repository.
+
+---
+
+## 🖱️ X.Org / Wayland note
+
+If you use X.Org, configure your input device to `/dev/input/mice` (the generic aggregated node) rather than a specific `/dev/input/mouseX`. razerd temporarily unclaims the USB device during configuration events; X will lose and re-acquire the mouse automatically when using the generic node.
 
 ```
 Section "InputDevice"
-    Identifier	"Mouse"
-    Driver	"mouse"
-    Option	"Device" "/dev/input/mice"
+    Identifier  "Mouse"
+    Driver      "mouse"
+    Option      "Device" "/dev/input/mice"
 EndSection
 ```
 
-Alternatively, do not specify a `"Device"` at all. X will autodetect the device
-then:
+---
 
-```
-Section "InputDevice"
-    Identifier	"Mouse"
-    Driver	"mouse"
-EndSection
-```
-
-In any case, do _NOT_ use: `Option "Device" "/dev/input/mouseX"`
-
-Using the tools
----------------
-
-To use the tools, the razerd daemon needs to be started as root, first. Without
-the background daemon, nothing will work. The daemon is responsible for doing
-the lowlevel hardware accesses and for tracking the current state of the device.
-While the daemon is running, the user interfaces `razercfg` (commandline) and
-`qrazercfg` (graphical user interface) can be used.
-
-Uninstalling
-------------
-
-If you installed razercfg with your distribution packaging system, use that to
-uninstall razercfg.
-
-If you compiled razercfg from source and installed it with `make install`, you
-can use the `uninstall.sh` script from the razercfg archive to uninstall
-razercfg from the system. It must be called with the install prefix as its first
-argument. That usually is `/usr/local`, unless specified otherwise in cmake. A
-call to uninstall.sh might look like this:
+## 🗑️ Uninstalling
 
 ```sh
-./uninstall.sh /usr/local
+sudo ./uninstall.sh /usr/local   # or your chosen prefix
 ```
 
-Architecture
-------------
+---
 
-The architecture layout of the razer tools looks like this:
+## 📄 License
 
-```
- -------------------
-| hardware driver 0 |--v
- -------------------   |
-                       |    ----------
- -------------------   |   | lowlevel |     --------      ---------
-| hardware driver 1 |--x---| librazer |----| razerd |----| pyrazer |
- -------------------   |    ----------      --------      ---------
-                       |                        |           ^ ^ ^
- -------------------   |     ---------------------------    | | |
-| hardware driver n |--^    | (to be written) librazerd |   | | |
- -------------------         ---------------------------    | | |
-                                              ^ ^ ^         | | |
-                                              | | |         | | |
-                           ---------------    | | |         | | |
-                          | Application 0 |---^ | |         | | |
-                           ---------------      | |         | | |
-                                                | |         | | |
-                           ---------------      | |         | | |
-                          | Application 1 |-----^ |         | | |
-                           ---------------        |         | | |
-                                                  |         | | |
-                           ---------------        |         | | |
-                          | Application n |-------^         | | |
-                           ---------------                  | | |
-                                                            | | |
-                           ----------                       | | |
-                          | razercfg |----------------------^ | |
-                           ----------                         | |
-                                                              | |
-                           -----------                        | |
-                          | qrazercfg |-----------------------^ |
-                           -----------                          |
-                                                                |
-                            --------------------------          |
-                          | Other Python applications |---------^
-                           ---------------------------
-```
-
-So in general, your application wants to access the razer devices through
-pyrazer or (if it's not a python app) through librazerd.
-(Note that librazerd is not written, yet. So currently the only way to access
-the devices is through pyrazer).
-Applications should never poke with lowlevel librazer directly, because there
-will be no instance that keeps track of the device state and permissions and
-concurrency.
-
-License
--------
-
-Copyright (c) 2007-2026 Michael Büsch, et al.
-
-See the COPYING file for license information.
+Copyright © 2007–2026 Michael Büsch et al.
+See the [`COPYING`](COPYING) file for full license information.
