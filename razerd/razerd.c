@@ -33,6 +33,7 @@
 #include <syslog.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __DragonFly__
 #include <sys/endian.h>
@@ -43,13 +44,11 @@
 
 #undef min
 #undef max
-#undef offsetof
-#define offsetof(type, member)	((size_t)&((type *)0)->member)
-#define min(x, y)		({ __typeof__(x) __x = (x); \
-				   __typeof__(y) __y = (y); \
+#define min(x, y)		({ typeof(x) __x = (x); \
+				   typeof(y) __y = (y); \
 				   __x < __y ? __x : __y; })
-#define max(x, y)		({ __typeof__(x) __x = (x); \
-				   __typeof__(y) __y = (y); \
+#define max(x, y)		({ typeof(x) __x = (x); \
+				   typeof(y) __y = (y); \
 				   __x > __y ? __x : __y; })
 #define ARRAY_SIZE(x)		(sizeof(x) / sizeof((x)[0]))
 
