@@ -28,6 +28,7 @@
 #include "hw_basilisk.h"
 #include "hw_viper.h"
 #include "hw_lancehead.h"
+#include "hw_naga_v2.h"
 #include "hw_naga.h"
 #include "hw_krait.h"
 #include "hw_lachesis.h"
@@ -130,6 +131,12 @@ static const struct razer_mouse_base_ops razer_lancehead_base_ops = {
 	.type    = RAZER_MOUSETYPE_DEATHADDER,
 	.init    = razer_lancehead_init,
 	.release = razer_lancehead_release,
+};
+
+static const struct razer_mouse_base_ops razer_naga_v2_base_ops = {
+	.type    = RAZER_MOUSETYPE_DEATHADDER,
+	.init    = razer_naga_v2_init,
+	.release = razer_naga_v2_release,
 };
 
 static const struct razer_mouse_base_ops razer_naga_base_ops = {
@@ -256,6 +263,12 @@ static const struct razer_usb_device razer_usbdev_table[] = {
 	USB_MOUSE(0x1532, 0x005F, &razer_lancehead_base_ops), /* Lancehead (wireless) */
 	USB_MOUSE(0x1532, 0x0070, &razer_lancehead_base_ops), /* Lancehead TE */
 	USB_MOUSE(0x1532, 0x0072, &razer_lancehead_base_ops), /* Lancehead Wireless */
+	USB_MOUSE(0x1532, 0x008F, &razer_naga_v2_base_ops), /* Naga X */
+	USB_MOUSE(0x1532, 0x0096, &razer_naga_v2_base_ops), /* Naga Pro (wired) */
+	USB_MOUSE(0x1532, 0x0090, &razer_naga_v2_base_ops), /* Naga Pro (wireless) */
+	USB_MOUSE(0x1532, 0x008D, &razer_naga_v2_base_ops), /* Naga Trinity */
+	USB_MOUSE(0x1532, 0x0094, &razer_naga_v2_base_ops), /* Naga Left-Handed */
+	USB_MOUSE(0x1532, 0x00A0, &razer_naga_v2_base_ops), /* Naga V2 Pro (wired) */
 //	USB_MOUSE(0x04B4, 0xE006, &razer_deathadder_base_ops), /* cypress bootloader */
 	USB_MOUSE(0x1532, 0x0003, &razer_krait_base_ops),
 	USB_MOUSE(0x1532, 0x000C, &razer_lachesis_base_ops), /* classic */
