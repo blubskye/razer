@@ -22,6 +22,7 @@ endmacro(CHECK_LIB)
 check_lib(usb-1.0 libusb.h)
 
 add_subdirectory(librazer)
+add_subdirectory(librazerd)
 
 configure_file("udev.rules.template" "udev.rules")
 
