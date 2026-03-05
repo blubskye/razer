@@ -802,16 +802,29 @@ int razerd_get_fw_version(razerd_t *r, const char *idstr,
 }
 
 /* ------------------------------------------------------------------ */
-/* Profile stubs                                                       */
+/* Profile operations                                                  */
 /* ------------------------------------------------------------------ */
 
 int razerd_get_profiles(razerd_t *r, const char *idstr,
                          uint32_t **ids_out, size_t *count_out)
 {
-    (void)r; (void)idstr;
-    *ids_out   = NULL;
-    *count_out = 0;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_GETPROFILES, idstr, NULL, 0);
+    if (err) goto unlock;
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+    if (count == 0) { *ids_out = NULL; *count_out = 0; goto unlock; }
+    uint32_t *ids = malloc(count * sizeof(uint32_t));
+    if (!ids) { err = -ENOMEM; goto unlock; }
+    for (uint32_t i = 0; i < count; i++) {
+        err = recv_u32(r, &ids[i]);
+        if (err) { free(ids); goto unlock; }
+    }
+    *ids_out = ids; *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 void razerd_free_profiles(uint32_t *ids)
@@ -822,43 +835,111 @@ void razerd_free_profiles(uint32_t *ids)
 int razerd_get_active_profile(razerd_t *r, const char *idstr,
                                uint32_t *id_out)
 {
-    (void)r; (void)idstr;
-    *id_out = RAZERD_PROFILE_INVALID;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_GETACTIVEPROF, idstr, NULL, 0);
+    if (!err) err = recv_u32(r, id_out);
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_set_active_profile(razerd_t *r, const char *idstr, uint32_t id)
 {
-    (void)r; (void)idstr; (void)id;
-    return -ENOSYS;
+    uint32_t payload = htobe32(id);
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SETACTIVEPROF, idstr, &payload, 4);
+    if (!err) {
+        uint32_t result;
+        err = recv_u32(r, &result);
+        if (!err && result != 0) { r->last_err = (int)result; err = -EIO; }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_get_profile_name(razerd_t *r, const char *idstr,
                              uint32_t profile_id, char **name_out)
 {
-    (void)r; (void)idstr; (void)profile_id;
-    *name_out = NULL;
-    return -ENOSYS;
+    uint32_t payload = htobe32(profile_id);
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_GETPROFNAME, idstr, &payload, 4);
+    if (!err) err = recv_str(r, name_out);
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_set_profile_name(razerd_t *r, const char *idstr,
                              uint32_t profile_id, const char *name)
 {
-    (void)r; (void)idstr; (void)profile_id; (void)name;
-    return -ENOSYS;
+    /* Payload: [u32 profile_id][128 bytes UTF-16-BE name (64 code units)] */
+    struct __attribute__((packed)) {
+        uint32_t profile_id;
+        uint8_t  name_utf16be[64 * 2];
+    } payload = {0};
+
+    payload.profile_id = htobe32(profile_id);
+
+    /* Convert UTF-8 input to UTF-16-BE (BMP only), max 64 code units */
+    const uint8_t *src = (const uint8_t *)name;
+    size_t wi = 0;
+    while (*src && wi < 64u) {
+        uint32_t cp;
+        if ((*src & 0x80u) == 0) {
+            cp = *src++;
+        } else if ((*src & 0xE0u) == 0xC0u) {
+            cp = ((uint32_t)(*src++ & 0x1Fu) << 6) | (*src++ & 0x3Fu);
+        } else if ((*src & 0xF0u) == 0xE0u) {
+            cp  = ((uint32_t)(*src++ & 0x0Fu) << 12);
+            cp |= ((uint32_t)(*src++ & 0x3Fu) <<  6);
+            cp |= (*src++ & 0x3Fu);
+        } else {
+            src++; /* skip invalid/non-BMP */
+            continue;
+        }
+        payload.name_utf16be[wi * 2]     = (uint8_t)(cp >> 8);
+        payload.name_utf16be[wi * 2 + 1] = (uint8_t)(cp & 0xFF);
+        wi++;
+    }
+
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SETPROFNAME, idstr, &payload, sizeof(payload));
+    if (!err) {
+        uint32_t result;
+        err = recv_u32(r, &result);
+        if (!err && result != 0) { r->last_err = (int)result; err = -EIO; }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 /* ------------------------------------------------------------------ */
-/* Button stubs                                                        */
+/* Button operations                                                   */
 /* ------------------------------------------------------------------ */
 
 int razerd_get_buttons(razerd_t *r, const char *idstr,
                         razerd_button_t **out, size_t *count_out)
 {
-    (void)r; (void)idstr;
-    *out       = NULL;
-    *count_out = 0;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SUPPBUTTONS, idstr, NULL, 0);
+    if (err) goto unlock;
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+    if (count == 0) { *out = NULL; *count_out = 0; goto unlock; }
+    razerd_button_t *b = calloc(count, sizeof(*b));
+    if (!b) { err = -ENOMEM; goto unlock; }
+    for (uint32_t i = 0; i < count; i++) {
+        char *name = NULL;
+        err = recv_u32(r, &b[i].id);
+        if (err) { free(b); goto unlock; }
+        err = recv_str(r, &name);
+        if (err) { free(b); goto unlock; }
+        snprintf(b[i].name, sizeof(b[i].name), "%s", name ? name : "");
+        free(name);
+    }
+    *out = b; *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 void razerd_free_buttons(razerd_button_t *b)
@@ -869,10 +950,28 @@ void razerd_free_buttons(razerd_button_t *b)
 int razerd_get_button_functions(razerd_t *r, const char *idstr,
                                  razerd_button_func_t **out, size_t *count_out)
 {
-    (void)r; (void)idstr;
-    *out       = NULL;
-    *count_out = 0;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SUPPBUTFUNCS, idstr, NULL, 0);
+    if (err) goto unlock;
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+    if (count == 0) { *out = NULL; *count_out = 0; goto unlock; }
+    razerd_button_func_t *f = calloc(count, sizeof(*f));
+    if (!f) { err = -ENOMEM; goto unlock; }
+    for (uint32_t i = 0; i < count; i++) {
+        char *name = NULL;
+        err = recv_u32(r, &f[i].id);
+        if (err) { free(f); goto unlock; }
+        err = recv_str(r, &name);
+        if (err) { free(f); goto unlock; }
+        snprintf(f[i].name, sizeof(f[i].name), "%s", name ? name : "");
+        free(name);
+    }
+    *out = f; *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 void razerd_free_button_functions(razerd_button_func_t *f)
@@ -884,29 +983,71 @@ int razerd_get_button_function(razerd_t *r, const char *idstr,
                                 uint32_t profile_id, uint32_t button_id,
                                 razerd_button_func_t *out)
 {
-    (void)r; (void)idstr; (void)profile_id; (void)button_id; (void)out;
-    return -ENOSYS;
+    uint32_t payload[2] = { htobe32(profile_id), htobe32(button_id) };
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_GETBUTFUNC, idstr, payload, sizeof(payload));
+    if (!err) {
+        char *name = NULL;
+        err = recv_u32(r, &out->id);
+        if (!err) err = recv_str(r, &name);
+        if (!err) {
+            snprintf(out->name, sizeof(out->name), "%s", name ? name : "");
+            free(name);
+        }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 int razerd_set_button_function(razerd_t *r, const char *idstr,
                                 uint32_t profile_id, uint32_t button_id,
                                 uint32_t func_id)
 {
-    (void)r; (void)idstr; (void)profile_id; (void)button_id; (void)func_id;
-    return -ENOSYS;
+    uint32_t payload[3] = {
+        htobe32(profile_id), htobe32(button_id), htobe32(func_id)
+    };
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SETBUTFUNC, idstr, payload, sizeof(payload));
+    if (!err) {
+        uint32_t result;
+        err = recv_u32(r, &result);
+        if (!err && result != 0) { r->last_err = (int)result; err = -EIO; }
+    }
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 /* ------------------------------------------------------------------ */
-/* Axes stubs                                                          */
+/* Axes operations                                                     */
 /* ------------------------------------------------------------------ */
 
 int razerd_get_axes(razerd_t *r, const char *idstr,
                     razerd_axis_t **out, size_t *count_out)
 {
-    (void)r; (void)idstr;
-    *out       = NULL;
-    *count_out = 0;
-    return -ENOSYS;
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SUPPAXES, idstr, NULL, 0);
+    if (err) goto unlock;
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+    if (count == 0) { *out = NULL; *count_out = 0; goto unlock; }
+    razerd_axis_t *a = calloc(count, sizeof(*a));
+    if (!a) { err = -ENOMEM; goto unlock; }
+    for (uint32_t i = 0; i < count; i++) {
+        char *name = NULL;
+        err = recv_u32(r, &a[i].id);
+        if (err) { free(a); goto unlock; }
+        err = recv_str(r, &name);
+        if (err) { free(a); goto unlock; }
+        snprintf(a[i].name, sizeof(a[i].name), "%s", name ? name : "");
+        free(name);
+        err = recv_u32(r, &a[i].flags);
+        if (err) { free(a); goto unlock; }
+    }
+    *out = a; *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 void razerd_free_axes(razerd_axis_t *a)
