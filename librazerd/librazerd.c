@@ -313,6 +313,7 @@ static __attribute__((unused)) int recv_u32(razerd_t *r, uint32_t *out)
 /* Same but reads from priv_fd. */
 static __attribute__((unused)) int recv_u32_priv(razerd_t *r, uint32_t *out)
 {
+    if (r->priv_fd < 0) return -EPERM;
     uint8_t hdr;
     int err = recv_all(r->priv_fd, &hdr, 1);
     if (err) return err;
@@ -345,10 +346,12 @@ static __attribute__((unused)) int recv_str(razerd_t *r, char **out)
 
     if (enc == STR_ENC_UTF16BE) {
         size_t nbytes = (size_t)slen * 2u;
-        uint8_t *raw = malloc(nbytes);
+        uint8_t *raw = malloc(nbytes ? nbytes : 1);
         if (!raw) return -ENOMEM;
-        err = recv_all(r->cmd_fd, raw, nbytes);
-        if (err) { free(raw); return err; }
+        if (nbytes) {
+            err = recv_all(r->cmd_fd, raw, nbytes);
+            if (err) { free(raw); return err; }
+        }
 
         /* Convert BMP UTF-16-BE -> UTF-8.
          * Each UTF-16 code unit -> up to 3 UTF-8 bytes. */
@@ -380,6 +383,62 @@ static __attribute__((unused)) int recv_str(razerd_t *r, char **out)
     if (!buf) return -ENOMEM;
     err = recv_all(r->cmd_fd, buf, slen);
     if (err) { free(buf); return err; }
+    buf[slen] = '\0';
+    *out = buf;
+    return 0;
+}
+
+/* Same but reads from priv_fd. */
+static __attribute__((unused)) int recv_str_priv(razerd_t *r, char **out)
+{
+    if (r->priv_fd < 0) return -EPERM;
+    uint8_t hdr;
+    int err = recv_all(r->priv_fd, &hdr, 1);
+    if (err) return err;
+    if (hdr != REPLY_STR) return -EPROTO;
+    uint8_t enc;
+    err = recv_all(r->priv_fd, &enc, 1);
+    if (err) return err;
+    uint16_t slen_be;
+    err = recv_all(r->priv_fd, (uint8_t *)&slen_be, 2);
+    if (err) return err;
+    uint16_t slen = be16toh(slen_be);
+    if (enc == STR_ENC_UTF16BE) {
+        size_t nbytes = (size_t)slen * 2u;
+        uint8_t *raw = malloc(nbytes ? nbytes : 1);
+        if (!raw) return -ENOMEM;
+        if (nbytes) {
+            err = recv_all(r->priv_fd, raw, nbytes);
+            if (err) { free(raw); return err; }
+        }
+        char *utf8 = malloc(slen * 3u + 1u);
+        if (!utf8) { free(raw); return -ENOMEM; }
+        size_t wi = 0;
+        for (uint16_t i = 0; i < slen; i++) {
+            uint16_t cp = ((uint16_t)raw[i * 2] << 8) | raw[i * 2 + 1];
+            if (cp == 0) break;
+            if (cp < 0x80u) {
+                utf8[wi++] = (char)cp;
+            } else if (cp < 0x800u) {
+                utf8[wi++] = (char)(0xC0u | (cp >> 6));
+                utf8[wi++] = (char)(0x80u | (cp & 0x3Fu));
+            } else {
+                utf8[wi++] = (char)(0xE0u | (cp >> 12));
+                utf8[wi++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                utf8[wi++] = (char)(0x80u | (cp & 0x3Fu));
+            }
+        }
+        utf8[wi] = '\0';
+        free(raw);
+        *out = utf8;
+        return 0;
+    }
+    char *buf = malloc((size_t)slen + 1u);
+    if (!buf) return -ENOMEM;
+    if (slen) {
+        err = recv_all(r->priv_fd, buf, slen);
+        if (err) { free(buf); return err; }
+    }
     buf[slen] = '\0';
     *out = buf;
     return 0;
