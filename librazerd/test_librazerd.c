@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "librazerd.h"
+#ifdef LIBRAZERD_NOTIFICATIONS
+#include <poll.h>
+#endif
 
 static int tests_run = 0;
 static int tests_failed = 0;
@@ -97,6 +100,27 @@ static void test_get_leds(void)
     PASS();
 }
 
+#ifdef LIBRAZERD_NOTIFICATIONS
+static void test_notifications(void)
+{
+    TEST("razerd notifications (poll fd)");
+    razerd_t *r = razerd_open();
+    if (!r) { FAIL("razerd_open failed (razerd running?)"); return; }
+
+    int fd = razerd_get_notify_fd(r);
+    ASSERT(fd >= 0, "notify fd invalid");
+
+    /* Poll with 0 timeout — should have no events right after connect */
+    struct pollfd pfd = { .fd = fd, .events = POLLIN };
+    int ret = poll(&pfd, 1, 0);
+    ASSERT(ret == 0, "unexpected event on notify fd");
+
+    printf("(fd=%d, no spurious events) ", fd);
+    razerd_close(r);
+    PASS();
+}
+#endif
+
 int main(void)
 {
     printf("librazerd tests (requires running razerd)\n");
@@ -106,6 +130,9 @@ int main(void)
     test_get_mice();
     test_mouse_info();
     test_get_leds();
+#ifdef LIBRAZERD_NOTIFICATIONS
+    test_notifications();
+#endif
 
     printf("\n%d/%d tests passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;
