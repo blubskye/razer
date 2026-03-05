@@ -69,6 +69,33 @@ static void test_mouse_info(void)
     PASS();
 }
 
+static void test_get_leds(void)
+{
+    TEST("razerd_get_leds");
+    razerd_t *r = razerd_open();
+    if (!r) { FAIL("razerd_open failed"); return; }
+
+    char **mice = NULL; size_t mc = 0;
+    int err = razerd_get_mice(r, &mice, &mc);
+    if (err != 0 || mc == 0) {
+        printf("(no mice, skipping) ");
+        razerd_free_mice(mice, mc);
+        razerd_close(r);
+        PASS();
+        return;
+    }
+
+    razerd_led_t *leds = NULL;
+    size_t lc = 0;
+    err = razerd_get_leds(r, mice[0], 0xFFFFFFFFu, &leds, &lc);
+    if (err != 0) { razerd_free_mice(mice, mc); razerd_close(r); FAIL("get_leds failed"); return; }
+    printf("(%zu leds) ", lc);
+    razerd_free_leds(leds);
+    razerd_free_mice(mice, mc);
+    razerd_close(r);
+    PASS();
+}
+
 int main(void)
 {
     printf("librazerd tests (requires running razerd)\n");
@@ -77,6 +104,7 @@ int main(void)
     test_open_close();
     test_get_mice();
     test_mouse_info();
+    test_get_leds();
 
     printf("\n%d/%d tests passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;

@@ -521,16 +521,58 @@ int razerd_get_mouse_info(razerd_t *r, const char *idstr, uint32_t *flags_out)
 }
 
 /* ------------------------------------------------------------------ */
-/* LED stubs                                                           */
+/* LED operations                                                      */
 /* ------------------------------------------------------------------ */
 
 int razerd_get_leds(razerd_t *r, const char *idstr, uint32_t profile_id,
                     razerd_led_t **leds_out, size_t *count_out)
 {
-    (void)r; (void)idstr; (void)profile_id;
-    *leds_out  = NULL;
-    *count_out = 0;
-    return -ENOSYS;
+    uint32_t payload_be = htobe32(profile_id);
+
+    mtx_lock(&r->lock);
+
+    int err = send_cmd(r, CMD_GETLEDS, idstr, &payload_be, 4);
+    if (err) goto unlock;
+
+    uint32_t count;
+    err = recv_u32(r, &count);
+    if (err) goto unlock;
+
+    razerd_led_t *leds = calloc(count, sizeof(razerd_led_t));
+    if (!leds) { err = -ENOMEM; goto unlock; }
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t flags, state, mode, supported_modes, color_u32;
+        char *name = NULL;
+
+        if ((err = recv_u32(r, &flags))          != 0) goto fail_led;
+        if ((err = recv_str(r, &name))            != 0) goto fail_led;
+        if ((err = recv_u32(r, &state))           != 0) { free(name); goto fail_led; }
+        if ((err = recv_u32(r, &mode))            != 0) { free(name); goto fail_led; }
+        if ((err = recv_u32(r, &supported_modes)) != 0) { free(name); goto fail_led; }
+        if ((err = recv_u32(r, &color_u32))       != 0) { free(name); goto fail_led; }
+
+        snprintf(leds[i].name, sizeof(leds[i].name), "%s", name ? name : "");
+        free(name);
+        leds[i].state            = state;
+        leds[i].mode             = mode;
+        leds[i].supported_modes  = supported_modes;
+        leds[i].has_color        = (flags & 0x1u) != 0;
+        leds[i].can_change_color = (flags & 0x2u) != 0;
+        leds[i].r = (uint8_t)((color_u32 >> 16) & 0xFFu);
+        leds[i].g = (uint8_t)((color_u32 >>  8) & 0xFFu);
+        leds[i].b = (uint8_t)((color_u32       ) & 0xFFu);
+        continue;
+fail_led:
+        free(leds);
+        goto unlock;
+    }
+
+    *leds_out  = leds;
+    *count_out = count;
+unlock:
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 void razerd_free_leds(razerd_led_t *leds)
@@ -541,8 +583,21 @@ void razerd_free_leds(razerd_led_t *leds)
 int razerd_set_led(razerd_t *r, const char *idstr, uint32_t profile_id,
                    const razerd_led_t *led)
 {
-    (void)r; (void)idstr; (void)profile_id; (void)led;
-    return -ENOSYS;
+    /* Payload: [u32 profile_id][64 bytes led_name][u8 state][u8 mode][u32 color_0xRRGGBB] */
+    uint8_t payload[4 + 64 + 1 + 1 + 4] = {0};
+    uint32_t pid_be = htobe32(profile_id);
+    memcpy(payload, &pid_be, 4);
+    snprintf((char *)payload + 4, 64, "%s", led->name);
+    payload[4 + 64]     = (uint8_t)led->state;
+    payload[4 + 64 + 1] = (uint8_t)led->mode;
+    uint32_t color = ((uint32_t)led->r << 16) | ((uint32_t)led->g << 8) | led->b;
+    uint32_t color_be = htobe32(color);
+    memcpy(payload + 4 + 64 + 2, &color_be, 4);
+
+    mtx_lock(&r->lock);
+    int err = send_cmd(r, CMD_SETLED, idstr, payload, sizeof(payload));
+    mtx_unlock(&r->lock);
+    return err;
 }
 
 /* ------------------------------------------------------------------ */
